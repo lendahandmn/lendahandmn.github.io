@@ -1,7 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import {
   SUPABASE_URL, SUPABASE_KEY, SITE_NAME, TAGLINE, CONTACT_EMAIL,
-  MAP_CENTER, MAP_ZOOM, CATEGORIES, BADGES,
+  MAP_CENTER, MAP_ZOOM, CATEGORIES, BADGES, PHOTOS, WAYS, DONATE_URL, ANYTIME, PLACES,
 } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -57,6 +57,64 @@ function randomCode() {
 }
 function localInputToISO(v) { return v ? new Date(v).toISOString() : null; }
 
+const CAT_ICON = { Cleanup: '🧹', Food: '🥫', Animals: '🐶', Seniors: '👵', 'Kids & Tutoring': '📚', 'Snow & Yard': '❄️', Environment: '🌱', 'Drives & Donations': '📦', Other: '🛠️' };
+const CAT_PHOTO = { Cleanup: 'cleanup', Food: 'food', Animals: 'animals', Environment: 'garden', Other: 'paint', Seniors: 'smile1', 'Kids & Tutoring': 'smile2', 'Drives & Donations': 'food' };
+const catIcon = (c) => CAT_ICON[c] || '🤝';
+const catPhoto = (c) => (CAT_PHOTO[c] ? PHOTOS[CAT_PHOTO[c]] : null);
+const img = (src, alt = '') => (src ? `<img src="${src}" alt="${esc(alt)}" loading="lazy" onerror="this.remove()">` : '');
+function pinIcon(cat) {
+  return L.divIcon({ className: '', html: `<div class="pin"><span>${catIcon(cat)}</span></div>`, iconSize: [34, 34], iconAnchor: [17, 34], popupAnchor: [0, -32] });
+}
+
+/* scroll reveal + count-up numbers */
+let revealObs;
+function setupReveal() {
+  revealObs?.disconnect();
+  revealObs = new IntersectionObserver((entries) => {
+    entries.forEach((en) => {
+      if (!en.isIntersecting) return;
+      en.target.classList.add('in');
+      if (en.target.dataset.count != null) countUp(en.target);
+      revealObs.unobserve(en.target);
+    });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal, [data-count]').forEach((el) => revealObs.observe(el));
+}
+function countUp(el) {
+  const target = Number(el.dataset.count) || 0;
+  const t0 = performance.now(), dur = 1400;
+  const step = (t) => {
+    const p = Math.min(1, (t - t0) / dur), eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = fmtHours(Math.round(target * eased * 10) / 10);
+    if (p < 1) requestAnimationFrame(step); else el.textContent = fmtHours(target);
+  };
+  requestAnimationFrame(step);
+}
+
+/* confetti 🎉 */
+function confetti() {
+  const c = document.getElementById('confetti'), ctx = c.getContext('2d');
+  c.width = innerWidth; c.height = innerHeight;
+  const colors = ['#ff6b4a', '#ffc145', '#2f8fd0', '#17594a', '#ffffff'];
+  const parts = Array.from({ length: 160 }, () => ({
+    x: innerWidth / 2 + (Math.random() - .5) * 200, y: innerHeight * .35,
+    vx: (Math.random() - .5) * 16, vy: -Math.random() * 14 - 4,
+    r: Math.random() * 6 + 4, c: colors[(Math.random() * colors.length) | 0], a: Math.random() * 6, s: (Math.random() - .5) * .3,
+  }));
+  let frames = 0;
+  (function tick() {
+    ctx.clearRect(0, 0, c.width, c.height);
+    parts.forEach((p) => {
+      p.vy += .35; p.vx *= .99; p.x += p.vx; p.y += p.vy; p.a += p.s;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.a); ctx.fillStyle = p.c; ctx.fillRect(-p.r / 2, -p.r / 4, p.r, p.r / 2); ctx.restore();
+    });
+    if (++frames < 170) requestAnimationFrame(tick); else ctx.clearRect(0, 0, c.width, c.height);
+  })();
+}
+
+/* top bar turns solid when you scroll */
+addEventListener('scroll', () => document.getElementById('topbar').classList.toggle('scrolled', scrollY > 30), { passive: true });
+
 /* ================= auth ================= */
 async function loadProfile() {
   profile = null;
@@ -90,36 +148,145 @@ async function pageHome() {
   if (error) throw error;
   const countMap = Object.fromEntries((counts || []).map((c) => [c.event_id, c.n]));
   const s = (stats && stats[0]) || { total_hours: 0, volunteers: 0, events: 0 };
+  const words = ['pick up trash', 'pack meals', 'walk shelter dogs', 'plant trees', 'shovel snow', 'help neighbors'];
 
   app.innerHTML = `
     <section class="hero">
-      <h1>${esc(TAGLINE)}</h1>
-      <p>Find volunteer events across Minnesota: cleanups, food shelves, animal shelters and more. Check in on site and your hours are tracked for you.</p>
-      <div class="actions">
-        <a class="btn" href="#events">Find an event</a>
-        ${session ? '<a class="btn ghost" href="#/me">See my hours</a>' : '<a class="btn ghost" href="#/login">Create free account</a>'}
+      <div class="hero-bg" style="background-image:url('${PHOTOS.hero}')"></div>
+      <div class="hero-inner">
+        <span class="eyebrow" style="color:var(--gold)">Free · Minnesota · Community-powered</span>
+        <h1>Come <span class="rotator" id="rot"><span>${words[0]}</span></span><br>with your neighbors.</h1>
+        <p class="lead">Find volunteer events near you, check in on site, and get credit for every hour you give. Badges, a leaderboard, and a printable certificate included.</p>
+        <div class="actions">
+          <a class="btn" href="#events">Find an event →</a>
+          ${session ? '<a class="btn glass" href="#/me">See my hours</a>' : '<a class="btn glass" href="#/login">Join free</a>'}
+        </div>
+        <div class="hero-chips"><span>🧹 Cleanups</span><span>🥫 Food shelves</span><span>🐶 Animal shelters</span><span>❄️ Snow shoveling</span><span>🌱 Gardens</span></div>
       </div>
     </section>
-    <div class="stats">
-      <div class="stat"><b>${fmtHours(s.total_hours)}</b><span>verified hours volunteered</span></div>
-      <div class="stat"><b>${s.volunteers}</b><span>volunteers with logged hours</span></div>
-      <div class="stat"><b>${s.events}</b><span>events posted</span></div>
-    </div>
 
-    <div class="section-title" id="events">
-      <h2>Upcoming events</h2>
-      <div class="filters" id="filters">
-        <button class="chip on" data-cat="">All</button>
-        ${CATEGORIES.map((c) => `<button class="chip" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}
+    <div class="wrap stats-band">
+      <div class="stats">
+        <div class="stat reveal"><div class="ico">⏱️</div><div><b data-count="${Number(s.total_hours)}">0</b><span>verified hours volunteered</span></div></div>
+        <div class="stat reveal d1"><div class="ico">🙌</div><div><b data-count="${Number(s.volunteers)}">0</b><span>volunteers with logged hours</span></div></div>
+        <div class="stat reveal d2"><div class="ico">📍</div><div><b data-count="${Number(s.events)}">0</b><span>events posted</span></div></div>
       </div>
     </div>
-    <div class="split">
-      <div class="grid" id="list"></div>
-      <div id="map"></div>
-    </div>`;
+
+    <section class="section wrap" id="ways">
+      <div class="section-head reveal">
+        <div><span class="eyebrow">Ways to help</span><h2>Pick what you love.<br>We'll find the event.</h2></div>
+        <p>Tap a card to see upcoming events for it. No experience needed, just show up ready to help.</p>
+      </div>
+      <div class="ways">
+        ${WAYS.map((w, i) => `
+          <button class="way reveal d${i % 3 + 1} ${w.photo ? '' : 'snow'}" data-cat="${esc(w.cat)}">
+            ${w.photo ? img(PHOTOS[w.photo], w.title) : `<span class="big-ico">${w.icon}</span>`}
+            <div class="way-body"><h3>${esc(w.title)}</h3><p>${esc(w.blurb)}</p><span class="go">See events <i>→</i></span></div>
+          </button>`).join('')}
+      </div>
+    </section>
+
+    <section class="wrap">
+      <div class="how reveal">
+        <span class="eyebrow" style="color:var(--gold)">How it works</span>
+        <h2>From couch to community<br>in four steps.</h2>
+        <div class="steps">
+          <div class="step reveal d1"><div class="num">🔍</div><small>STEP 1</small><h3>Find an event</h3><p>Browse the map for something near you that you'd actually enjoy.</p></div>
+          <div class="step reveal d2"><div class="num">✋</div><small>STEP 2</small><h3>Save your spot</h3><p>One tap to sign up so the organizer knows you're coming.</p></div>
+          <div class="step reveal d3"><div class="num">🔑</div><small>STEP 3</small><h3>Check in on site</h3><p>Enter the code the event leader gives out. Your hours are verified on the spot.</p></div>
+          <div class="step reveal d4"><div class="num">🏅</div><small>STEP 4</small><h3>Get the credit</h3><p>Earn badges, climb the leaderboard, and print a certificate anytime.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section wrap" id="events">
+      <div class="section-head reveal">
+        <div><span class="eyebrow">Upcoming</span><h2>Events near you</h2></div>
+        <div class="filters" id="filters">
+          <button class="chip on" data-cat="">All</button>
+          ${CATEGORIES.map((c) => `<button class="chip" data-cat="${esc(c)}">${catIcon(c)} ${esc(c)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="events-layout">
+        <div class="grid" id="list"></div>
+        <div class="map-sticky"><div id="map"></div></div>
+      </div>
+    </section>
+
+    <section class="section wrap" style="padding-top:0">
+      <div class="anytime-band reveal">
+        <div>
+          <span class="eyebrow">No event this week?</span>
+          <h2>Do good anytime.</h2>
+          <p class="muted" style="font-size:1.05rem;max-width:440px">Litter walks, shoveling for neighbors, care kits and more. Do it on your own time, then log your hours in seconds.</p>
+          <a class="btn" href="#/anytime">See anytime ideas →</a>
+        </div>
+        <div class="anytime-mini">
+          ${ANYTIME.slice(0, 6).map((a) => `<a href="#/anytime" class="mini"><span>${a.icon}</span>${esc(a.title)}</a>`).join('')}
+        </div>
+      </div>
+    </section>
+
+    <section class="section wrap" style="padding-top:0">
+      <div class="impact">
+        <div class="mosaic reveal">
+          <div>${img(PHOTOS.smile1, 'Smiling volunteer at a park cleanup')}</div>
+          <div>${img(PHOTOS.garden, 'Volunteers planting flowers')}</div>
+          <div>${img(PHOTOS.smile2, 'Volunteer smiling during a cleanup')}</div>
+        </div>
+        <div class="reveal d2">
+          <span class="eyebrow">Why LendAHand MN</span>
+          <h2>Hours that actually count.</h2>
+          <p class="muted" style="font-size:1.05rem">Need service hours for school, a club, Greek life, or a scholarship? Every hour you check in with a code is verified, so the people you turn it in to can trust it.</p>
+          <ul class="checklist">
+            <li><b>✓</b><span><strong>Verified check-ins.</strong> Organizers share a code on site, so no fake hours.</span></li>
+            <li><b>✓</b><span><strong>One-click certificate.</strong> Print or save as PDF whenever you need it.</span></li>
+            <li><b>✓</b><span><strong>100% free.</strong> No ads, no fees, no catch.</span></li>
+          </ul>
+          <a class="btn green" href="${session ? '#/me' : '#/login'}">${session ? 'View my hours' : 'Start tracking free'}</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <div class="section-head reveal" style="margin-bottom:1rem">
+        <div><span class="eyebrow">Level up</span><h2>Collect badges as you go</h2></div>
+        <p>Earned with verified hours. How far can you get?</p>
+      </div>
+      <div class="badge-strip">
+        ${BADGES.map((b, i) => `<div class="badge reveal d${i % 5 + 1}"><div class="i">${b.icon}</div><div class="n">${b.name}</div><div class="h">${b.hours} hour${b.hours > 1 ? 's' : ''}</div></div>`).join('')}
+      </div>
+    </section>
+
+    <section class="section wrap">
+      <div class="donate-band reveal">
+        <div class="bg" style="background-image:url('${PHOTOS.together}')"></div>
+        <div>
+          <span class="eyebrow" style="color:var(--gold)">Support the mission</span>
+          <h2>Can't make it out?<br>Chip in instead.</h2>
+          <p style="opacity:.88;max-width:480px">Donations help cover gloves, trash bags, water and supplies for volunteer events around Minnesota.</p>
+        </div>
+        <div style="display:flex;gap:.7rem;flex-wrap:wrap;justify-content:flex-start">
+          <a class="btn gold" href="#/donate">💛 Donate</a>
+          <a class="btn glass" href="#/about">Host an event</a>
+        </div>
+      </div>
+    </section>`;
+
+  // rotating words in the headline
+  let wi = 0;
+  const rot = document.getElementById('rot');
+  clearInterval(window._rot);
+  window._rot = setInterval(() => {
+    if (!document.body.contains(rot)) return clearInterval(window._rot);
+    wi = (wi + 1) % words.length;
+    rot.innerHTML = `<span>${words[wi]}</span>`;
+  }, 2200);
 
   const map = await makeMap(document.getElementById('map'));
   const layer = L.layerGroup().addTo(map);
+  const markers = {};
 
   const draw = (cat) => {
     const list = (events || []).filter((e) => !cat || e.category === cat);
@@ -128,36 +295,45 @@ async function pageHome() {
       const n = countMap[e.id] || 0;
       const full = e.capacity && n >= e.capacity;
       return `
-      <a class="card event-card" href="#/event/${e.id}">
+      <a class="card event-card" href="#/event/${e.id}" data-id="${e.id}">
         <div class="date-box"><div class="m">${fmtDate(e.starts_at, { month: 'short' })}</div><div class="d">${fmtDate(e.starts_at, { day: 'numeric' })}</div></div>
-        <div>
-          <h3>${esc(e.title)}</h3>
+        <div style="flex:1;min-width:0">
+          <h3>${catIcon(e.category)} ${esc(e.title)}</h3>
           <div class="meta"><span>🕒 ${fmtWhen(e.starts_at, e.ends_at)}</span><span>📍 ${esc(e.location_name)}</span></div>
-          <div style="margin-top:.4rem;display:flex;gap:.35rem;flex-wrap:wrap">
+          <div class="tags">
             <span class="tag">${esc(e.category)}</span>
-            <span class="tag sun">${fmtHours(e.hours)} hrs</span>
-            <span class="tag gray">${n}${e.capacity ? ' / ' + e.capacity : ''} going${full ? ' · FULL' : ''}</span>
+            <span class="tag sun">⏱️ ${fmtHours(e.hours)} hrs</span>
+            <span class="tag ${full ? 'coral' : 'gray'}">🙋 ${n}${e.capacity ? ' / ' + e.capacity : ''} going${full ? ' · FULL' : ''}</span>
           </div>
+          ${e.capacity ? `<div class="spots"><div style="width:${Math.min(100, (n / e.capacity) * 100)}%"></div></div>` : ''}
         </div>
       </a>`;
-    }).join('') : `<div class="card empty">No upcoming events${cat ? ' in this category' : ''} yet. Check back soon!</div>`;
+    }).join('') : `<div class="card empty"><span class="big">🌤️</span>No upcoming events${cat ? ' in this category' : ''} yet.<br>Check back soon, or <a href="#/about">suggest one</a>!</div>`;
     const pts = [];
     list.forEach((e) => {
       if (e.lat == null || e.lng == null) return;
       pts.push([e.lat, e.lng]);
-      L.marker([e.lat, e.lng]).addTo(layer)
+      markers[e.id] = L.marker([e.lat, e.lng], { icon: pinIcon(e.category) }).addTo(layer)
         .bindPopup(`<strong>${esc(e.title)}</strong><br>${fmtWhen(e.starts_at, e.ends_at)}<br><a href="#/event/${e.id}">View event →</a>`);
     });
-    if (pts.length > 1) map.fitBounds(pts, { padding: [40, 40], maxZoom: 12 });
-    else if (pts.length === 1) map.setView(pts[0], 12);
+    if (pts.length > 1) map.fitBounds(pts, { padding: [40, 40], maxZoom: 12, animate: false });
+    else if (pts.length === 1) map.setView(pts[0], 12, { animate: false });
+    // hovering a card highlights its pin
+    document.querySelectorAll('#list .event-card').forEach((card) => {
+      card.onmouseenter = () => { const m = markers[card.dataset.id]; if (m) { m.openPopup(); } };
+    });
   };
   draw('');
-  document.getElementById('filters').onclick = (ev) => {
-    const b = ev.target.closest('.chip'); if (!b) return;
-    document.querySelectorAll('#filters .chip').forEach((c) => c.classList.toggle('on', c === b));
-    draw(b.dataset.cat);
+  const pick = (cat) => {
+    document.querySelectorAll('#filters .chip').forEach((c) => c.classList.toggle('on', c.dataset.cat === cat));
+    draw(cat);
   };
-  if (location.hash === '#events') document.getElementById('events').scrollIntoView();
+  document.getElementById('filters').onclick = (ev) => { const b = ev.target.closest('.chip'); if (b) pick(b.dataset.cat); };
+  document.querySelectorAll('.way').forEach((w) => (w.onclick = () => {
+    pick(w.dataset.cat);
+    document.getElementById('events').scrollIntoView({ behavior: 'smooth' });
+  }));
+  if (location.hash === '#events') setTimeout(() => document.getElementById('events').scrollIntoView(), 50);
 }
 
 async function pageEvent(id) {
@@ -183,24 +359,28 @@ async function pageEvent(id) {
   const full = e.capacity && going >= e.capacity && !mine;
 
   app.innerHTML = `
-    <p><a href="#/">← All events</a></p>
+    <p style="margin-top:0"><a href="#/" style="font-weight:600;text-decoration:none">← All events</a></p>
+    <div class="event-hero">
+      ${img(catPhoto(e.category), e.category)}
+      <div><span class="tag sun">${catIcon(e.category)} ${esc(e.category)}</span></div>
+      <h1 style="margin:.7rem 0 .6rem;color:#fff">${esc(e.title)}</h1>
+      <div class="meta">
+        <span>🕒 ${fmtWhen(e.starts_at, e.ends_at)}</span>
+        <span>📍 ${esc(e.location_name)}</span>
+        <span>⏱️ ${fmtHours(e.hours)} hours</span>
+        <span>🙋 ${going}${e.capacity ? ' / ' + e.capacity : ''} going</span>
+      </div>
+    </div>
     <div class="split">
       <div class="card">
-        <span class="tag">${esc(e.category)}</span>
-        <h1 style="font-size:2.1rem;margin-top:.5rem">${esc(e.title)}</h1>
-        <div class="meta" style="font-size:.95rem;margin-bottom:1rem">
-          <span>🕒 ${fmtWhen(e.starts_at, e.ends_at)}</span>
-          <span>📍 ${esc(e.location_name)}</span>
-          <span>⏱️ ${fmtHours(e.hours)} hours</span>
-          <span>🙋 ${going}${e.capacity ? ' / ' + e.capacity : ''} going</span>
-        </div>
-        <p style="white-space:pre-wrap">${esc(e.description)}</p>
+        <h3>About this event</h3>
+        <p style="white-space:pre-wrap;margin-top:.3rem">${esc(e.description) || '<span class="muted">More details coming soon.</span>'}</p>
         <div id="actions" style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.2rem"></div>
         <div id="checkin"></div>
         ${e.lat != null ? `<p class="help" style="margin-top:1rem"><a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${e.lat},${e.lng}">Get directions in Google Maps ↗</a></p>` : ''}
       </div>
       <div>
-        ${e.lat != null ? '<div class="map" id="emap"></div>' : ''}
+        ${e.lat != null ? '<div class="map medium" id="emap"></div>' : ''}
         <div id="admin-box"></div>
       </div>
     </div>`;
@@ -218,13 +398,13 @@ async function pageEvent(id) {
         toast('Spot cancelled'); render();
       };
     } else {
-      actions.innerHTML = full ? `<button class="btn" disabled>Event is full</button>` : `<button class="btn green" id="join">Sign me up</button>`;
+      actions.innerHTML = full ? `<button class="btn" disabled>Event is full</button>` : `<button class="btn" id="join">✋ Save my spot</button>`;
       const j = document.getElementById('join');
       if (j) j.onclick = async () => {
         if (needLogin()) return;
         const { error } = await sb.from('signups').insert({ event_id: id, user_id: session.user.id });
         if (error) return toast(cleanError(error));
-        toast("You're signed up! 🎉"); render();
+        confetti(); toast("You're signed up! 🎉"); render();
       };
     }
   }
@@ -232,11 +412,11 @@ async function pageEvent(id) {
   // check-in
   if (!checkedIn && checkinOpen) {
     document.getElementById('checkin').innerHTML = `
-      <div class="notice" style="margin-top:1.2rem">
-        <strong>At the event?</strong> Enter the check-in code your event leader gives you to log your hours.
-        <form id="cform" style="display:flex;gap:.5rem;margin-top:.6rem">
-          <input id="code" placeholder="CODE" maxlength="12" autocomplete="off" style="text-transform:uppercase;letter-spacing:.15em;font-weight:700;max-width:180px">
-          <button class="btn green">Check in</button>
+      <div class="checkin-box">
+        <strong>📍 At the event?</strong> Enter the check-in code your event leader gives you to log verified hours.
+        <form id="cform">
+          <input id="code" placeholder="CODE" maxlength="12" autocomplete="off">
+          <button class="btn">Check in ✓</button>
         </form>
       </div>`;
     document.getElementById('cform').onsubmit = async (ev) => {
@@ -246,13 +426,13 @@ async function pageEvent(id) {
       if (!code) return;
       const { data, error } = await sb.rpc('check_in', { p_event: id, p_code: code });
       if (error) return toast(cleanError(error));
-      toast(`Checked in! +${fmtHours(data)} verified hours 🎉`); render();
+      confetti(); toast(`Checked in! +${fmtHours(data)} verified hours 🎉`); render();
     };
   }
 
   if (e.lat != null) {
     const m = await makeMap(document.getElementById('emap'), [e.lat, e.lng], 13);
-    L.marker([e.lat, e.lng]).addTo(m);
+    L.marker([e.lat, e.lng], { icon: pinIcon(e.category) }).addTo(m);
   }
 
   // admin panel
@@ -285,7 +465,11 @@ async function pageLogin() {
   let mode = 'signup';
   const draw = () => {
     app.innerHTML = `
-      <div class="card narrow">
+      <div class="auth-wrap">
+       <div class="auth-photo">${img(PHOTOS.smile2, 'Smiling volunteer')}
+         <div><span class="eyebrow" style="color:var(--gold)">LendAHand MN</span><h2>Every hour you give, counted.</h2><p style="opacity:.85;margin:0">Join free to sign up for events, check in, earn badges and print your certificate.</p></div>
+       </div>
+       <div class="auth-form">
         <div class="tabs">
           <button class="chip ${mode === 'signup' ? 'on' : ''}" data-m="signup">Sign up</button>
           <button class="chip ${mode === 'login' ? 'on' : ''}" data-m="login">Log in</button>
@@ -298,9 +482,10 @@ async function pageLogin() {
           <label>Email</label><input id="email" type="email" required autocomplete="email">
           <label>Password</label><input id="pw" type="password" required minlength="6" autocomplete="${mode === 'signup' ? 'new-password' : 'current-password'}">
           <div id="err" class="error"></div>
-          <button class="btn green" style="width:100%;margin-top:1rem">${mode === 'signup' ? 'Create account' : 'Log in'}</button>
+          <button class="btn" style="width:100%;margin-top:1.2rem">${mode === 'signup' ? 'Create my free account →' : 'Log in →'}</button>
         </form>
         ${mode === 'login' ? '<p class="help" style="text-align:center"><a href="#" id="forgot">Forgot password?</a></p>' : ''}
+       </div>
       </div>`;
     app.querySelectorAll('.tabs .chip').forEach((b) => (b.onclick = () => { mode = b.dataset.m; draw(); }));
     const forgot = document.getElementById('forgot');
@@ -326,7 +511,7 @@ async function pageLogin() {
             app.innerHTML = `<div class="card narrow empty"><h2>Check your email 📬</h2><p>We sent a link to <strong>${esc(email)}</strong>. Click it to finish signing up.</p></div>`;
             return;
           }
-          toast(`Welcome, ${full_name.split(' ')[0] || 'friend'}! 🎉`);
+          confetti(); toast(`Welcome, ${full_name.split(' ')[0] || 'friend'}! 🎉`);
         } else {
           const { error } = await sb.auth.signInWithPassword({ email, password });
           if (error) throw error;
@@ -374,34 +559,41 @@ async function pageMe() {
   const pct = nxt ? Math.min(100, ((verified - prevH) / (nxt.hours - prevH)) * 100) : 100;
   const first = (profile?.full_name || '').split(' ')[0] || 'friend';
 
+  const C = 2 * Math.PI * 74;
   app.innerHTML = `
-    <h1>Hey ${esc(first)} 👋</h1>
-    <div class="split" style="margin-top:1rem">
-      <div class="card">
-        <div class="muted">Verified hours</div>
-        <div class="big-hours">${fmtHours(verified)}</div>
-        ${self ? `<div class="muted" style="margin-top:.3rem">+ ${fmtHours(self)} self-reported hours</div>` : ''}
-        <div style="margin-top:1rem">${cur ? `${cur.icon} <strong>${cur.name}</strong>` : 'No badge yet. Check in to your first event!'}</div>
-        ${nxt ? `<div class="progress"><div style="width:${pct}%"></div></div>
-        <div class="help">${fmtHours(nxt.hours - verified)} more hours to ${nxt.icon} ${nxt.name}</div>` : '<div class="help">You\'ve earned every badge. Legend. 🏆</div>'}
-        <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1.2rem">
-          <a class="btn" href="#/certificate">📄 Get my hour certificate</a>
+    <div class="me-hero">
+      <div class="ring">
+        <svg width="170" height="170"><circle cx="85" cy="85" r="74" stroke="rgba(255,255,255,.15)" stroke-width="12" fill="none"/>
+          <circle id="ringbar" cx="85" cy="85" r="74" stroke="url(#g)" stroke-width="12" fill="none" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C}" style="transition:stroke-dashoffset 1.4s cubic-bezier(.2,.7,.2,1)"/>
+          <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#ffc145"/><stop offset="1" stop-color="#ff6b4a"/></linearGradient></defs></svg>
+        <div class="val"><div><b data-count="${verified}">0</b><span>verified hours</span></div></div>
+      </div>
+      <div style="position:relative;z-index:2">
+        <h1>Hey ${esc(first)} 👋</h1>
+        <div style="font-size:1.1rem">${cur ? `${cur.icon} You're a <strong>${cur.name}</strong>` : 'Check in to your first event to earn a badge!'}</div>
+        ${self ? `<div class="help">+ ${fmtHours(self)} self-reported hours</div>` : ''}
+        <div class="help" style="margin-top:.4rem">${nxt ? `${fmtHours(nxt.hours - verified)} more verified hours to ${nxt.icon} <strong>${nxt.name}</strong>` : "You've earned every badge. Legend. 🏆"}</div>
+        <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.2rem">
+          <a class="btn gold" href="#/certificate">📄 My hour certificate</a>
+          <a class="btn glass" href="#/">Find more events</a>
         </div>
       </div>
+    </div>
+    <div class="split" style="margin-top:1.5rem">
       <div class="card">
-        <h3>Your upcoming events</h3>
+        <h3>📅 Your upcoming events</h3>
         ${upcoming.length ? upcoming.map((e) => `<p style="margin:.5rem 0"><a href="#/event/${e.id}"><strong>${esc(e.title)}</strong></a><br><span class="muted">${fmtWhen(e.starts_at, e.ends_at)}</span></p>`).join('')
           : '<p class="muted">Nothing yet. <a href="#/">Find an event →</a></p>'}
       </div>
+      <div class="card"><h3>🏅 Next badge</h3>${nxt ? `<p class="muted" style="margin:.3rem 0 0">${nxt.icon} <strong>${nxt.name}</strong> at ${nxt.hours} hours</p><div class="spots" style="max-width:none;height:10px"><div style="width:${pct}%"></div></div>` : '<p class="muted">All badges earned!</p>'}</div>
     </div>
-
-    <div class="section-title"><h2>Badges</h2></div>
+    <div class="section-head" style="margin:2.5rem 0 1rem"><h2>Badges</h2></div>
     <div class="badges">
       ${BADGES.map((b) => `<div class="badge ${verified >= b.hours ? '' : 'locked'}"><div class="i">${b.icon}</div><div class="n">${b.name}</div><div class="h">${b.hours} hr${b.hours > 1 ? 's' : ''}</div></div>`).join('')}
     </div>
 
-    <div class="section-title"><h2>Hour history</h2></div>
-    <div class="card">
+    <div class="section-head" style="margin:2.5rem 0 1rem"><h2>Hour history</h2></div>
+    <div class="card table-scroll">
       ${rows.length ? `<table><thead><tr><th>Date</th><th>Activity</th><th>Hours</th><th>Status</th><th></th></tr></thead><tbody>
         ${rows.map((h) => `<tr><td>${fmtDay(h.activity_date)}</td><td>${esc(h.activity)}</td><td>${fmtHours(h.hours)}</td>
           <td>${h.verified ? '<span class="tag">✅ Verified</span>' : '<span class="tag gray">Self-reported</span>'}</td>
@@ -409,7 +601,7 @@ async function pageMe() {
       </tbody></table>` : '<div class="empty">No hours yet. Check in at an event with the event code to get verified hours.</div>'}
     </div>
 
-    <div class="section-title"><h2>Volunteered on your own?</h2></div>
+    <div class="section-head" style="margin:2.5rem 0 1rem"><h2>Volunteered on your own?</h2></div>
     <div class="card">
       <p class="muted" style="margin-top:0">Picked up trash on a walk or shoveled a neighbor's driveway? Log it here. These show as <em>self-reported</em> (not verified) and don't count toward badges or the leaderboard.</p>
       <form id="selfform">
@@ -421,7 +613,7 @@ async function pageMe() {
       </form>
     </div>
 
-    <div class="section-title"><h2>Settings</h2></div>
+    <div class="section-head" style="margin:2.5rem 0 1rem"><h2>Settings</h2></div>
     <div class="card">
       <form id="nameform" style="display:flex;gap:.5rem;align-items:end;flex-wrap:wrap">
         <div style="flex:1;min-width:220px"><label style="margin-top:0">Name on certificate</label><input id="fn" value="${esc(profile?.full_name || '')}" required></div>
@@ -429,6 +621,7 @@ async function pageMe() {
       </form>
     </div>`;
 
+  setTimeout(() => { const r = document.getElementById('ringbar'); if (r) r.style.strokeDashoffset = C * (1 - (nxt ? pct / 100 : 1)); }, 120);
   document.getElementById('dt').value = new Date().toLocaleDateString('en-CA', { timeZone: TZ });
   document.getElementById('selfform').onsubmit = async (ev) => {
     ev.preventDefault();
@@ -484,36 +677,196 @@ async function pageCertificate() {
 async function pageLeaderboard() {
   const { data, error } = await sb.rpc('leaderboard', { limit_n: 50 });
   if (error) throw error;
-  const medals = ['🥇', '🥈', '🥉'];
+  const rows = data || [];
+  const max = Math.max(1, ...rows.map((r) => Number(r.total_hours)));
+  const pod = (r, medal, cls) => r ? `<div class="p ${cls} reveal"><div class="medal">${medal}</div><b>${esc(r.name)}</b><div class="hrs">${fmtHours(r.total_hours)}</div><div class="muted" style="font-size:.8rem">verified hours</div></div>` : `<div class="p ${cls}" style="opacity:.4"><div class="medal">${medal}</div><b>Could be you</b></div>`;
   app.innerHTML = `
-    <h1>Leaderboard</h1>
-    <p class="muted">Top volunteers by <strong>verified</strong> hours. Names show first name + last initial.</p>
-    <div class="card" style="padding:0;margin-top:1rem">
-      ${data?.length ? data.map((r, i) => {
+    <div class="page-title"><span class="eyebrow">Hall of fame</span><h1>Leaderboard</h1>
+      <p>Top Minnesota volunteers by <strong>verified</strong> hours. Names show first name and last initial.</p></div>
+    <div class="podium">${pod(rows[1], '🥈', '')}${pod(rows[0], '🥇', 'first')}${pod(rows[2], '🥉', '')}</div>
+    <div class="card" style="padding:0">
+      ${rows.length ? rows.map((r, i) => {
         const b = badgeFor(Number(r.total_hours));
-        return `<div class="lb-row ${i < 3 ? 'top' : ''}"><div class="lb-rank">${medals[i] || i + 1}</div>
+        return `<div class="lb-row"><div class="lb-rank">${i + 1}</div>
           <div class="lb-name">${esc(r.name)} ${b ? `<span title="${b.name}">${b.icon}</span>` : ''}</div>
-          <div class="muted" style="font-size:.85rem">${r.events_count} event${r.events_count == 1 ? '' : 's'}</div>
-          <div class="lb-hours">${fmtHours(r.total_hours)} hrs</div></div>`;
-      }).join('') : '<div class="empty">No verified hours yet. Be the first! 🏁</div>'}
+          <div class="lb-bar"><div style="width:${(Number(r.total_hours) / max) * 100}%"></div></div>
+          <div class="muted" style="font-size:.85rem;width:70px;text-align:right">${r.events_count} event${r.events_count == 1 ? '' : 's'}</div>
+          <div class="lb-hours" style="width:70px;text-align:right">${fmtHours(r.total_hours)} hrs</div></div>`;
+      }).join('') : '<div class="empty"><span class="big">🏁</span>No verified hours yet. Check in at an event to grab the #1 spot!</div>'}
     </div>`;
+}
+
+async function pageDonate() {
+  const levels = [
+    { amt: 5,  e: '🧤', text: 'helps cover work gloves for a cleanup volunteer' },
+    { amt: 10, e: '🗑️', text: 'helps cover trash bags and gloves for a cleanup crew' },
+    { amt: 25, e: '💧', text: 'helps cover water and snacks for volunteers at an event' },
+    { amt: 50, e: '📦', text: 'helps cover supplies for a whole community event' },
+  ];
+  let amt = 25, monthly = false;
+  app.innerHTML = `
+    <div class="donate-wrap">
+      <div class="donate-photo reveal">${img(PHOTOS.food, 'Volunteers packing food')}
+        <div class="quote">💛 Every dollar goes toward supplies that put volunteers to work across Minnesota.</div>
+      </div>
+      <div class="card reveal d1" style="padding:clamp(1.6rem,4vw,2.4rem)">
+        <span class="eyebrow">Donate</span>
+        <h1 style="font-size:clamp(2rem,4vw,2.8rem)">Fuel the next cleanup.</h1>
+        <p class="muted">Pick an amount to see what it helps make possible.</p>
+        <div class="freq" id="freq"><button class="on" data-m="0">One time</button><button data-m="1">Monthly</button></div>
+        <div class="amounts" id="amts">${levels.map((l) => `<button class="amt ${l.amt === amt ? 'on' : ''}" data-a="${l.amt}">$${l.amt}</button>`).join('')}</div>
+        <div class="impact-line" id="impact"></div>
+        <label>Or enter your own amount</label>
+        <input id="custom" type="number" min="1" step="1" placeholder="$ Other amount">
+        <button class="btn" id="give" style="width:100%;margin-top:1.2rem;font-size:1.05rem"></button>
+        <p class="help" id="givehelp" style="text-align:center"></p>
+        <div class="notice" style="margin-top:1rem">LendAHand MN is a community project and is <strong>not yet a registered 501(c)(3) nonprofit</strong>, so donations are not tax-deductible. Questions? <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a></div>
+      </div>
+    </div>`;
+  const upd = () => {
+    const lvl = [...levels].reverse().find((l) => amt >= l.amt) || levels[0];
+    document.getElementById('impact').innerHTML = `<span class="e">${lvl.e}</span><span>$${amt}${monthly ? '/month' : ''} ${lvl.text}.</span>`;
+    const give = document.getElementById('give');
+    if (DONATE_URL) {
+      give.textContent = `Donate $${amt}${monthly ? ' monthly' : ''} →`; give.disabled = false;
+      document.getElementById('givehelp').textContent = `You'll finish on our secure payment page. Enter $${amt} there.`;
+    } else {
+      give.textContent = 'Online giving coming soon'; give.disabled = true;
+      document.getElementById('givehelp').innerHTML = `Want to help now? Email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.`;
+    }
+  };
+  document.getElementById('amts').onclick = (ev) => {
+    const b = ev.target.closest('.amt'); if (!b) return;
+    amt = Number(b.dataset.a); document.getElementById('custom').value = '';
+    document.querySelectorAll('.amt').forEach((x) => x.classList.toggle('on', x === b)); upd();
+  };
+  document.getElementById('custom').oninput = (ev) => {
+    const v = Math.floor(Number(ev.target.value));
+    if (v >= 1) { amt = v; document.querySelectorAll('.amt').forEach((x) => x.classList.toggle('on', Number(x.dataset.a) === v)); upd(); }
+  };
+  document.getElementById('freq').onclick = (ev) => {
+    const b = ev.target.closest('button'); if (!b) return;
+    monthly = b.dataset.m === '1';
+    document.querySelectorAll('#freq button').forEach((x) => x.classList.toggle('on', x === b)); upd();
+  };
+  document.getElementById('give').onclick = () => { if (DONATE_URL) window.open(DONATE_URL, '_blank', 'noopener'); };
+  upd();
 }
 
 async function pageAbout() {
   app.innerHTML = `
-    <div class="card" style="max-width:760px;margin:0 auto">
-      <h1>About LendAHand MN</h1>
-      <p>LendAHand MN is a free, community-run site that makes it easy to find volunteer opportunities around Minnesota and keep track of the hours you give.</p>
-      <h3 style="margin-top:1.4rem">How it works</h3>
-      <ol>
-        <li><strong>Find an event</strong>: cleanups, food shelves, animal shelters, snow shoveling for neighbors and more.</li>
-        <li><strong>Sign up</strong> so the organizer knows you're coming.</li>
-        <li><strong>Check in</strong>: at the event, the leader gives out a code. Enter it and your hours are logged as <em>verified</em>.</li>
-        <li><strong>Earn badges</strong>, climb the leaderboard, and print a certificate for school, a club, or a job application.</li>
-      </ol>
-      <h3 style="margin-top:1.4rem">Want to host an event?</h3>
-      <p>Email us at <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a> with what, where and when, and we'll post it.</p>
+    <div class="event-hero" style="min-height:320px">
+      ${img(PHOTOS.together, 'People holding hands')}
+      <span class="eyebrow" style="color:var(--gold)">About us</span>
+      <h1 style="color:#fff;max-width:700px">Minnesota runs on neighbors helping neighbors.</h1>
+    </div>
+    <div class="split">
+      <div class="card reveal">
+        <h2>Our mission</h2>
+        <p>LendAHand MN is a free, community-run site that makes it easy to find volunteer opportunities around Minnesota and keep track of the hours you give.</p>
+        <p>Whether you need service hours for school, a club or a scholarship, or you just want to do some good on a Saturday morning, we make it simple to show up and get credit for it.</p>
+        <h3 style="margin-top:1.4rem">How check-in works</h3>
+        <p class="muted">Every event has a secret code that the event leader shares in person. Volunteers enter it on the event page, and their hours are logged as <strong>verified</strong>. That's how schools and organizations know the hours are real.</p>
+      </div>
+      <div class="card reveal d1" style="background:linear-gradient(135deg,#fff6e0,#ffeee6)">
+        <h2>Host an event 📣</h2>
+        <p>Running a cleanup, food drive, or shelter shift? We'll post it for free and give you a check-in code for your volunteers.</p>
+        <p>Email us what, where, and when:</p>
+        <a class="btn" href="mailto:${CONTACT_EMAIL}?subject=Event%20for%20LendAHand%20MN">✉️ ${CONTACT_EMAIL}</a>
+      </div>
     </div>`;
+}
+
+/* ---------- "log hours" popup used by the Anytime page ---------- */
+function openLogModal(activity) {
+  if (needLogin()) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-bg';
+  wrap.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true">
+      <button class="modal-x" aria-label="Close">✕</button>
+      <span class="eyebrow">Log your hours</span>
+      <h2 style="font-size:1.7rem">${esc(activity)}</h2>
+      <form id="lm">
+        <label>Where did you do it? <span class="muted" style="font-weight:400">(optional)</span></label>
+        <input id="lm-where" maxlength="80" placeholder="e.g. Lake Nokomis, my block, Animal Humane Society">
+        <div class="row">
+          <div><label>Date</label><input id="lm-date" type="date" required></div>
+          <div><label>Hours</label><input id="lm-hrs" type="number" min="0.25" max="24" step="0.25" value="1" required></div>
+        </div>
+        <p class="help">These are logged as <strong>self-reported</strong> hours and show on your certificate in their own section.</p>
+        <div id="lm-err" class="error"></div>
+        <button class="btn" style="width:100%;margin-top:.8rem">Log it ✓</button>
+      </form>
+    </div>`;
+  document.body.appendChild(wrap);
+  requestAnimationFrame(() => wrap.classList.add('show'));
+  const close = () => { wrap.classList.remove('show'); setTimeout(() => wrap.remove(), 250); };
+  wrap.onclick = (ev) => { if (ev.target === wrap) close(); };
+  wrap.querySelector('.modal-x').onclick = close;
+  const dt = wrap.querySelector('#lm-date');
+  dt.value = new Date().toLocaleDateString('en-CA', { timeZone: TZ });
+  dt.max = dt.value;
+  wrap.querySelector('#lm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const where = wrap.querySelector('#lm-where').value.trim();
+    const { error } = await sb.from('hours_log').insert({
+      user_id: session.user.id,
+      activity: (where ? `${activity} (${where})` : activity).slice(0, 120),
+      activity_date: dt.value,
+      hours: Number(wrap.querySelector('#lm-hrs').value),
+      verified: false,
+    });
+    if (error) { wrap.querySelector('#lm-err').textContent = cleanError(error); return; }
+    close(); confetti(); toast('Hours logged! Nice work 🙌');
+  };
+}
+
+async function pageAnytime() {
+  app.innerHTML = `
+    <div class="event-hero" style="min-height:300px">
+      ${img(PHOTOS.smile1, 'Volunteer smiling at a cleanup')}
+      <span class="eyebrow" style="color:var(--gold)">No event needed</span>
+      <h1 style="color:#fff;max-width:720px">Do good anytime, then log it.</h1>
+      <p style="max-width:560px;opacity:.9;margin:0">Ready-made community service you can do on your own schedule, plus great Minnesota organizations that take volunteers.</p>
+    </div>
+
+    <div class="section-head" style="margin:2.5rem 0 1.2rem">
+      <div><span class="eyebrow">On your own</span><h2>Grab one and go</h2></div>
+      <p>Do it today, then tap <strong>I did this</strong> to log your hours.</p>
+    </div>
+    <div class="anytime-grid">
+      ${ANYTIME.map((a, i) => `
+        <div class="any-card reveal d${i % 4 + 1}">
+          <div class="any-top"><div class="any-ico">${a.icon}</div><span class="tag sun">⏱️ ${esc(a.time)}</span></div>
+          <h3>${esc(a.title)}</h3>
+          <div class="muted" style="font-size:.86rem;margin-bottom:.5rem">📍 ${esc(a.where)}</div>
+          <p>${esc(a.blurb)}</p>
+          <div class="any-tip">💡 ${esc(a.tip)}${a.link ? ` <a href="${a.link}" target="_blank" rel="noopener">Visit ↗</a>` : ''}</div>
+          <button class="btn small" data-log="${esc(a.title)}">✓ I did this</button>
+        </div>`).join('')}
+    </div>
+
+    <div class="section-head" style="margin:3.5rem 0 1.2rem">
+      <div><span class="eyebrow">Places to volunteer</span><h2>Minnesota orgs that need you</h2></div>
+      <p>Sign up on their website, go volunteer, then come back and log your hours here.</p>
+    </div>
+    <div class="places-grid">
+      ${PLACES.map((p, i) => `
+        <div class="place reveal d${i % 3 + 1}">
+          <div class="any-ico">${p.icon}</div>
+          <div style="flex:1">
+            <h3 style="margin-bottom:.2rem">${esc(p.name)}</h3>
+            <p class="muted" style="margin:0 0 .8rem;font-size:.93rem">${esc(p.what)}</p>
+            <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+              <a class="btn small green" href="${p.url}" target="_blank" rel="noopener">Volunteer with them ↗</a>
+              <button class="btn small ghost" data-log="${esc(p.name)}">Log hours</button>
+            </div>
+          </div>
+        </div>`).join('')}
+    </div>
+    <p class="help" style="margin-top:1.2rem">LendAHand MN isn't affiliated with these organizations. Hours logged here are self-reported. For verified hours, check in at a <a href="#/">LendAHand MN event</a>.</p>`;
+  app.querySelectorAll('[data-log]').forEach((b) => (b.onclick = () => openLogModal(b.dataset.log)));
 }
 
 async function pageAdmin() {
@@ -606,6 +959,8 @@ const routes = [
   [/^#\/leaderboard$/, pageLeaderboard],
   [/^#\/about$/, pageAbout],
   [/^#\/admin$/, pageAdmin],
+  [/^#\/donate$/, pageDonate],
+  [/^#\/anytime$/, pageAnytime],
 ];
 
 async function render() {
@@ -615,18 +970,30 @@ async function render() {
   const hash = location.hash || '#/';
   if (hash.includes('access_token=') || hash.includes('type=recovery')) return; // Supabase handles these
   const match = routes.map(([re, fn]) => [hash.match(re), fn]).find(([m]) => m);
-  app.innerHTML = '<div class="loading">Loading…</div>';
+  document.body.classList.toggle('home', match && match[1] === pageHome);
+  document.getElementById('topbar').classList.toggle('scrolled', scrollY > 30);
+  app.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
   try {
     if (!match) { app.innerHTML = `<div class="card empty">Page not found. <a href="#/">Go home</a></div>`; return; }
     await match[1](...match[0].slice(1));
   } catch (e) {
     console.error(e);
-    app.innerHTML = `<div class="card empty"><h3>Something went wrong</h3><p>${esc(cleanError(e))}</p><p><a href="#/">Go home</a></p></div>`;
+    app.innerHTML = `<div class="card empty"><span class="big">😕</span><h3>Something went wrong</h3><p>${esc(cleanError(e))}</p><p><a href="#/">Go home</a></p></div>`;
   }
-  window.scrollTo(0, 0);
+  if (hash !== '#events') window.scrollTo(0, 0);
+  setupReveal();
 }
 
 window.addEventListener('hashchange', render);
+// in-page links like #events / #ways scroll instead of changing pages
+document.addEventListener('click', (ev) => {
+  const a = ev.target.closest('a[href^="#"]');
+  if (!a) return;
+  const h = a.getAttribute('href');
+  if (h.startsWith('#/') || h === '#') return;
+  const target = document.getElementById(h.slice(1));
+  if (target) { ev.preventDefault(); target.scrollIntoView({ behavior: 'smooth' }); }
+});
 
 if (SUPABASE_KEY.startsWith('PASTE_')) {
   app.innerHTML = `<div class="card empty"><h2>Almost there!</h2><p>Open <code>config.js</code> and paste your Supabase publishable key.</p></div>`;

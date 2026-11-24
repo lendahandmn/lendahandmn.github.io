@@ -4,40 +4,65 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>LendAHand MN | Volunteer in Minnesota &amp; Log Your Community Service Hours</title>
-  <meta name="description" content="LendAHand MN is a free community volunteering site for Minnesota. Find cleanups, food shelf shifts and more near you, check in on site, and track verified community service hours with a printable certificate.">
-  <meta name="keywords" content="volunteer Minnesota, community service hours, Twin Cities volunteering, trash pickup volunteer, log volunteer hours">
+  <meta name="description" content="LendAHand MN is a free community volunteering site for Minnesota. Find cleanups, food shelf shifts, animal shelter help and more near you, check in on site, and track verified community service hours with a printable certificate.">
+  <meta name="keywords" content="volunteer Minnesota, community service hours, Twin Cities volunteering, trash pickup volunteer, log volunteer hours, volunteer near me Minneapolis St Paul">
+  <meta name="theme-color" content="#0f3a2e">
   <meta property="og:title" content="LendAHand MN: Volunteer & log your hours">
   <meta property="og:description" content="Find volunteer events across Minnesota and track verified community service hours, free.">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://lendahandmn.github.io/">
+  <meta property="og:image" content="https://images.unsplash.com/photo-1758599668294-8d13c0942601?auto=format&fit=crop&w=1200&q=75">
   <link rel="canonical" href="https://lendahandmn.github.io/">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤝</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="styles.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"Organization","name":"LendAHand MN","url":"https://lendahandmn.github.io/","email":"lendahandmn@gmail.com","areaServed":"Minnesota","description":"Free community volunteering and service-hour tracking for Minnesota."}
+  </script>
 </head>
 <body>
-  <header class="topbar">
-    <a href="#/" class="brand"><span class="brand-mark">🤝</span> LendAHand <span class="mn">MN</span></a>
+  <header class="topbar" id="topbar">
+    <a href="#/" class="brand"><span class="brand-mark">🤝</span><span>LendAHand<span class="mn">MN</span></span></a>
     <button class="menu-btn" aria-label="Menu" onclick="document.body.classList.toggle('nav-open')">☰</button>
     <nav id="nav">
       <a href="#/">Events</a>
+      <a href="#/anytime">Anytime</a>
       <a href="#/leaderboard">Leaderboard</a>
       <a href="#/me">My Hours</a>
       <a href="#/about">About</a>
+      <a href="#/donate" class="nav-donate">💛 Donate</a>
       <span id="nav-auth"></span>
     </nav>
   </header>
 
-  <main id="app"><div class="loading">Loading…</div></main>
+  <main id="app"><div class="loading"><div class="spinner"></div></div></main>
 
   <footer class="footer">
-    <div>🤝 <strong>LendAHand MN</strong>: free community volunteering for Minnesota.</div>
-    <div>Questions? <a href="mailto:lendahandmn@gmail.com">lendahandmn@gmail.com</a></div>
+    <div class="footer-inner">
+      <div>
+        <a href="#/" class="brand"><span class="brand-mark">🤝</span><span>LendAHand<span class="mn">MN</span></span></a>
+        <p>Free community volunteering for Minnesota. Find an event, lend a hand, and get credit for every hour.</p>
+      </div>
+      <div>
+        <h4>Explore</h4>
+        <a href="#/">Find events</a><a href="#/anytime">Do good anytime</a><a href="#/leaderboard">Leaderboard</a><a href="#/me">My hours</a><a href="#/donate">Donate</a>
+      </div>
+      <div>
+        <h4>Contact</h4>
+        <a href="mailto:lendahandmn@gmail.com">lendahandmn@gmail.com</a>
+        <a href="#/about">Host an event</a>
+      </div>
+    </div>
+    <div class="footer-fine">© <span id="yr"></span> LendAHand MN · Photos from Unsplash</div>
   </footer>
 
   <div id="toast" class="toast"></div>
+  <canvas id="confetti"></canvas>
+  <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
   <script type="module" src="app.js"></script>
 </body>
 </html>
