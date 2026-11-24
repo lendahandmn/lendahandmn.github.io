@@ -85,7 +85,7 @@ function notifyEmail(id) {
 }
 const methodLabel = (m) => ({ code: '🔑 Leader code', gps: '📍 Location', address: '🏠 Address number' }[m] || '✅ Checked in');
 const fmtLong = (d) => new Date(d).toLocaleDateString('en-US', { timeZone: TZ, month: 'long', day: 'numeric', year: 'numeric' });
-const certNo = (id) => 'LAH-' + String(id).replace(/-/g, '').slice(0, 8).toUpperCase();
+const certNo = (id, d) => `LAH-${d ? new Date(d).getFullYear() : new Date().getFullYear()}-${String(id).replace(/-/g, '').slice(0, 6).toUpperCase()}`;
 function signatureHTML() {
   return SIGNATURE_IMAGE
     ? `<img class="sig-img" src="${SIGNATURE_IMAGE}" alt="Signature of ${esc(SIGNER_NAME)}">`
@@ -748,27 +748,54 @@ async function pageMe() {
   };
 }
 
+function sealSVG() {
+  // gold embossed seal: serrated edge, rings, curved text
+  const pts = [], n = 48;
+  for (let i = 0; i < n * 2; i++) {
+    const r = i % 2 ? 92 : 100, a = (Math.PI * i) / n;
+    pts.push(`${(100 + r * Math.cos(a)).toFixed(1)},${(100 + r * Math.sin(a)).toFixed(1)}`);
+  }
+  return `<svg class="seal-svg" viewBox="0 0 200 200" aria-hidden="true">
+    <defs>
+      <radialGradient id="gold" cx="35%" cy="30%" r="80%"><stop offset="0" stop-color="#fbe7a1"/><stop offset=".45" stop-color="#d9a93c"/><stop offset="1" stop-color="#9a6b12"/></radialGradient>
+      <path id="ring" d="M100,100 m-62,0 a62,62 0 1,1 124,0 a62,62 0 1,1 -124,0"/>
+    </defs>
+    <polygon points="${pts.join(' ')}" fill="url(#gold)" stroke="#8a5d0c" stroke-width="1"/>
+    <circle cx="100" cy="100" r="80" fill="none" stroke="#fff3c9" stroke-width="1.5" opacity=".8"/>
+    <circle cx="100" cy="100" r="76" fill="none" stroke="#8a5d0c" stroke-width="1"/>
+    <circle cx="100" cy="100" r="48" fill="none" stroke="#8a5d0c" stroke-width="1"/>
+    <circle cx="100" cy="100" r="45" fill="none" stroke="#fff3c9" stroke-width="1" opacity=".7"/>
+    <text font-family="Cinzel, Georgia, serif" font-size="10.5" font-weight="700" fill="#5e3f05">
+      <textPath href="#ring" startOffset="0" textLength="380" lengthAdjust="spacing">LENDAHAND MN ★ COMMUNITY SERVICE ★ MINNESOTA ★</textPath>
+    </text>
+    <text x="100" y="94" text-anchor="middle" font-family="Cinzel, Georgia, serif" font-size="24" font-weight="700" fill="#5e3f05">MN</text>
+    <text x="100" y="114" text-anchor="middle" font-family="Cinzel, Georgia, serif" font-size="9" font-weight="700" fill="#5e3f05" letter-spacing="1.5">CERTIFIED</text>
+    <text x="100" y="128" text-anchor="middle" font-size="10" fill="#5e3f05">★ ★ ★</text>
+  </svg>`;
+}
+
 function certificateHTML(c, official) {
-  const v = (c.details || []).filter((d) => d.verified), s = (c.details || []).filter((d) => !d.verified);
-  const table = (list, showHow) => `<table><thead><tr><th>Date</th><th>Activity</th><th>Hours</th>${showHow ? '<th>Check-in</th>' : ''}</tr></thead><tbody>
-    ${list.map((d) => `<tr><td>${fmtDay(d.date)}</td><td>${esc(d.activity)}</td><td>${fmtHours(d.hours)}</td>${showHow ? `<td>${methodLabel(d.method)}</td>` : ''}</tr>`).join('')}</tbody></table>`;
+  const total = Number(c.verified_hours || 0) + Number(c.self_hours || 0);
   return `
     <div class="cert ${official ? '' : 'unofficial'}">
-      ${official ? '' : '<div class="watermark">NOT CERTIFIED</div>'}
-      <div class="seal">🤝</div>
-      <div class="muted" style="letter-spacing:.2em;text-transform:uppercase;font-size:.8rem">${esc(SITE_NAME)}</div>
-      <h1>Certificate of Community Service</h1>
-      <p>This certifies that</p>
-      <div class="name">${esc(c.full_name || 'Volunteer')}</div>
-      <p class="total">has completed <strong>${fmtHours(c.verified_hours)} verified hours</strong> of community service${Number(c.self_hours) ? `, plus ${fmtHours(c.self_hours)} self-reported hours` : ''}.</p>
-      ${v.length ? `<h3 style="margin-top:1.5rem;text-align:left">Verified hours</h3>${table(v, true)}` : ''}
-      ${s.length ? `<h3 style="margin-top:1.5rem;text-align:left">Self-reported hours (not verified)</h3>${table(s, false)}` : ''}
-      <div class="sig">
-        <div class="sig-block">${official ? signatureHTML() : '<div class="sig-script" style="opacity:.15">Not signed</div>'}<div class="sig-line">${esc(SIGNER_NAME)}<br><span>${esc(SIGNER_TITLE)}</span></div></div>
-        <div class="sig-block"><div class="sig-date">${official ? fmtLong(c.reviewed_at) : '—'}</div><div class="sig-line">Issue date<br><span>${esc(SITE_NAME)}</span></div></div>
+      <div class="cert-frame">
+        ${official ? '' : '<div class="watermark">NOT CERTIFIED</div>'}
+        ${official ? `<div class="cert-no">No. ${certNo(c.id, c.reviewed_at)}</div>` : ''}
+        <div class="cert-org">LendAHand MN</div>
+        <div class="cert-rule"><span>❦</span></div>
+        <div class="cert-title">Certificate</div>
+        <div class="cert-sub">of Community Service</div>
+        <p class="cert-text">This is to certify that</p>
+        <div class="cert-name">${esc(c.full_name || 'Volunteer')}</div>
+        <p class="cert-text">has faithfully completed</p>
+        <div class="cert-hours">${fmtHours(total)} Hours</div>
+        <p class="cert-text">of community service in support of communities across the State of Minnesota,<br>as reviewed and certified by LendAHand MN.</p>
+        <div class="cert-foot">
+          <div class="sig-block">${official ? signatureHTML() : '<div class="sig-space"></div>'}<div class="sig-line">${esc(SIGNER_TITLE)}</div></div>
+          <div class="seal-wrap">${official ? sealSVG() : ''}</div>
+          <div class="sig-block"><div class="sig-date">${official ? fmtLong(c.reviewed_at) : ''}</div><div class="sig-line">Date of Issue</div></div>
+        </div>
       </div>
-      ${official ? `<p class="fine" style="margin-top:1.4rem"><strong>Certificate No. ${certNo(c.id)}</strong> · Verify at ${location.origin}${location.pathname}#/verify/${c.id}</p>` : ''}
-      <p class="fine">Verified hours were confirmed at the event by a leader's code, the volunteer's phone location, or the event's address number, and reviewed by ${esc(SITE_NAME)} before certification. Self-reported hours were entered by the volunteer.</p>
     </div>`;
 }
 
@@ -835,7 +862,7 @@ async function pageVerify(id) {
       <div class="verify-banner ${ok ? 'ok' : 'bad'}">
         <span class="big">${ok ? '✅' : c.status === 'pending' ? '⏳' : '❌'}</span>
         <div><h2>${ok ? 'This certificate is real' : c.status === 'pending' ? 'Not certified yet (under review)' : 'This certificate was not approved'}</h2>
-        <p>${ok ? `Issued by ${esc(SITE_NAME)} to <strong>${esc(c.full_name)}</strong> on ${fmtLong(c.reviewed_at)} for ${fmtHours(c.verified_hours)} verified hours. Certificate No. ${certNo(c.id)}.` : `Requested by ${esc(c.full_name)}.`}</p></div>
+        <p>${ok ? `Issued by ${esc(SITE_NAME)} to <strong>${esc(c.full_name)}</strong> on ${fmtLong(c.reviewed_at)} for ${fmtHours(Number(c.verified_hours) + Number(c.self_hours))} hours of community service. Certificate No. ${certNo(c.id, c.reviewed_at)}.` : `Requested by ${esc(c.full_name)}.`}</p></div>
       </div>
     </div>
     ${ok ? certificateHTML(c, true) : ''}`;
