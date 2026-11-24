@@ -782,6 +782,8 @@ async function pageCertificate() {
   const pending = (certs || []).find((c) => c.status === 'pending');
   const approved = (certs || []).find((c) => c.status === 'approved');
   const lastDenied = certs?.[0]?.status === 'denied' ? certs[0] : null;
+  // if an email didn't go out (offline, old cached page...), try again
+  (certs || []).forEach((c) => { if ((c.status === 'pending' && !c.admin_notified) || (c.status !== 'pending' && !c.user_notified)) notifyEmail(c.id); });
   const newHours = approved && (Number(approved.verified_hours) !== verified || Number(approved.self_hours) !== self);
   const preview = { full_name: profile?.full_name, verified_hours: verified, self_hours: self,
     details: rows.map((r) => ({ date: r.activity_date, activity: r.activity, hours: r.hours, verified: r.verified, method: r.method })) };
@@ -1106,7 +1108,8 @@ async function pageAdmin() {
   if (!profile?.is_admin) { app.innerHTML = `<div class="card empty">This page is for LendAHand MN admins.</div>`; return; }
   const { data: events } = await sb.from('events').select('id,title,starts_at,ends_at,location_name,checkin_mode').order('starts_at', { ascending: false });
   const { data: codes } = await sb.from('event_codes').select('event_id, code');
-  const { data: reqs } = await sb.from('certifications').select('id, full_name, verified_hours, self_hours, requested_at').eq('status', 'pending').order('requested_at');
+  const { data: reqs } = await sb.from('certifications').select('id, full_name, verified_hours, self_hours, requested_at, admin_notified').eq('status', 'pending').order('requested_at');
+  (reqs || []).forEach((r) => { if (!r.admin_notified) notifyEmail(r.id); });
   const codeMap = Object.fromEntries((codes || []).map((c) => [c.event_id, c.code]));
 
   app.innerHTML = `
