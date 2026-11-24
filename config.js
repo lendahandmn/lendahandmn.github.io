@@ -16,7 +16,7 @@ export const SIGNATURE_IMAGE = '';
 
 // Google Apps Script web app URL that sends the certification emails (see setup steps).
 // While empty, requests still work. You'll just see them on the Admin page instead of by email.
-export const EMAIL_SCRIPT_URL = '';
+export const EMAIL_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwCNo3WdeeAhHQMxb0d_pyxIIi-H1hkvSpvaRSSMqjJ0XWpkFVKmJD8aUXxN2EF6e9P2w/exec';
 
 // ===== DONATIONS =====
 // Paste your donation link between the quotes (PayPal, Venmo, Stripe, etc.).
