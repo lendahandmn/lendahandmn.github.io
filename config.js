@@ -7,6 +7,17 @@ export const SITE_NAME = 'LendAHand MN';
 export const TAGLINE = 'Show up. Lend a hand. Log your hours.';
 export const CONTACT_EMAIL = 'lendahandmn@gmail.com';
 
+// ===== CERTIFICATES =====
+// Person who signs certified certificates
+export const SIGNER_NAME = 'Thomas Birch';
+export const SIGNER_TITLE = 'Director, LendAHand MN';
+// Optional: link to a photo of his real signature (PNG with a clear background). Leave '' to use the script-font signature.
+export const SIGNATURE_IMAGE = '';
+
+// Google Apps Script web app URL that sends the certification emails (see setup steps).
+// While empty, requests still work. You'll just see them on the Admin page instead of by email.
+export const EMAIL_SCRIPT_URL = '';
+
 // ===== DONATIONS =====
 // Paste your donation link between the quotes (PayPal, Venmo, Stripe, etc.).
 // While it's empty, the Donate page shows "coming soon".

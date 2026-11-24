@@ -1,7 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import {
   SUPABASE_URL, SUPABASE_KEY, SITE_NAME, TAGLINE, CONTACT_EMAIL,
-  MAP_CENTER, MAP_ZOOM, CATEGORIES, BADGES, PHOTOS, WAYS, DONATE_URL, ANYTIME, PLACES,
+  MAP_CENTER, MAP_ZOOM, CATEGORIES, BADGES, PHOTOS, WAYS, DONATE_URL, ANYTIME, PLACES, SIGNER_NAME, SIGNER_TITLE, SIGNATURE_IMAGE, EMAIL_SCRIPT_URL,
 } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -14,7 +14,7 @@ let activeMaps = [];
 
 /* ================= helpers ================= */
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fmtHours = (h) => { const n = Number(h || 0); return Number.isInteger(n) ? String(n) : n.toFixed(1); };
+const fmtHours = (h) => { const n = Number(h || 0); return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2))); };
 const fmtDate = (d, opts) => new Date(d).toLocaleString('en-US', { timeZone: TZ, ...opts });
 const fmtWhen = (s, e) =>
   `${fmtDate(s, { weekday: 'short', month: 'short', day: 'numeric' })} · ${fmtDate(s, { hour: 'numeric', minute: '2-digit' })}–${fmtDate(e, { hour: 'numeric', minute: '2-digit' })}`;
@@ -64,6 +64,32 @@ const catPhoto = (c) => (CAT_PHOTO[c] ? PHOTOS[CAT_PHOTO[c]] : null);
 const img = (src, alt = '') => (src ? `<img src="${src}" alt="${esc(alt)}" loading="lazy" onerror="this.remove()">` : '');
 function pinIcon(cat) {
   return L.divIcon({ className: '', html: `<div class="pin"><span>${catIcon(cat)}</span></div>`, iconSize: [34, 34], iconAnchor: [17, 34], popupAnchor: [0, -32] });
+}
+
+function getLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error('Your browser can\'t share location. Try your phone.'));
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve(p.coords),
+      (err) => reject(new Error(err.code === 1
+        ? 'Location is blocked. Allow location for this site in your browser settings, then try again.'
+        : 'Couldn\'t get your location. Step outside or try again in a moment.')),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+  });
+}
+const fmtTimer = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+
+function notifyEmail(id) {
+  if (!EMAIL_SCRIPT_URL) return;
+  fetch(EMAIL_SCRIPT_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ id }) }).catch(() => {});
+}
+const methodLabel = (m) => ({ code: '🔑 Leader code', gps: '📍 Location', address: '🏠 Address number' }[m] || '✅ Checked in');
+const fmtLong = (d) => new Date(d).toLocaleDateString('en-US', { timeZone: TZ, month: 'long', day: 'numeric', year: 'numeric' });
+const certNo = (id) => 'LAH-' + String(id).replace(/-/g, '').slice(0, 8).toUpperCase();
+function signatureHTML() {
+  return SIGNATURE_IMAGE
+    ? `<img class="sig-img" src="${SIGNATURE_IMAGE}" alt="Signature of ${esc(SIGNER_NAME)}">`
+    : `<div class="sig-script">${esc(SIGNER_NAME)}</div>`;
 }
 
 /* scroll reveal + count-up numbers */
@@ -140,7 +166,7 @@ function renderNavAuth() {
 /* ================= pages ================= */
 async function pageHome() {
   const [{ data: events, error }, { data: counts }, { data: stats }] = await Promise.all([
-    sb.from('events').select('id,title,description,category,location_name,lat,lng,starts_at,ends_at,hours,capacity')
+    sb.from('events').select('id,title,description,category,location_name,lat,lng,starts_at,ends_at,hours,capacity,checkin_mode')
       .gte('ends_at', new Date().toISOString()).order('starts_at'),
     sb.rpc('signup_counts'),
     sb.rpc('site_stats'),
@@ -303,6 +329,7 @@ async function pageHome() {
           <div class="tags">
             <span class="tag">${esc(e.category)}</span>
             <span class="tag sun">⏱️ ${fmtHours(e.hours)} hrs</span>
+            <span class="tag gray">${e.checkin_mode === 'gps' ? '📍 Check in on site' : '🔑 Leader code'}</span>
             <span class="tag ${full ? 'coral' : 'gray'}">🙋 ${n}${e.capacity ? ' / ' + e.capacity : ''} going${full ? ' · FULL' : ''}</span>
           </div>
           ${e.capacity ? `<div class="spots"><div style="width:${Math.min(100, (n / e.capacity) * 100)}%"></div></div>` : ''}
@@ -338,23 +365,25 @@ async function pageHome() {
 
 async function pageEvent(id) {
   const { data: e, error } = await sb.from('events')
-    .select('id,title,description,category,location_name,lat,lng,starts_at,ends_at,hours,capacity').eq('id', id).maybeSingle();
+    .select('id,title,description,category,location_name,address,lat,lng,starts_at,ends_at,hours,capacity,checkin_mode').eq('id', id).maybeSingle();
   if (error) throw error;
   if (!e) { app.innerHTML = `<div class="card empty">Event not found. <a href="#/">Back to events</a></div>`; return; }
 
   const { data: counts } = await sb.rpc('signup_counts');
   const going = (counts || []).find((c) => c.event_id === id)?.n || 0;
-  let mine = false, checkedIn = false;
+  let mine = false, checkedIn = false, openCheckin = null, loggedHours = null;
+  const gps = e.checkin_mode === 'gps';
   if (session) {
-    const [{ data: s }, { data: h }] = await Promise.all([
+    const [{ data: s }, { data: h }, { data: oc }] = await Promise.all([
       sb.from('signups').select('event_id').eq('event_id', id).eq('user_id', session.user.id).maybeSingle(),
-      sb.from('hours_log').select('id').eq('event_id', id).eq('user_id', session.user.id).maybeSingle(),
+      sb.from('hours_log').select('id,hours').eq('event_id', id).eq('user_id', session.user.id).maybeSingle(),
+      gps ? sb.from('checkins').select('checked_in_at, method').eq('event_id', id).eq('user_id', session.user.id).maybeSingle() : Promise.resolve({ data: null }),
     ]);
-    mine = !!s; checkedIn = !!h;
+    mine = !!s; checkedIn = !!h; loggedHours = h?.hours; openCheckin = oc;
   }
   const now = Date.now();
   const start = new Date(e.starts_at).getTime(), end = new Date(e.ends_at).getTime();
-  const checkinOpen = now >= start - 3600e3 && now <= end + 3 * 86400e3;
+  const checkinOpen = gps ? now >= start - 1800e3 && now <= end : now >= start - 3600e3 && now <= end + 3 * 86400e3;
   const ended = now > end;
   const full = e.capacity && going >= e.capacity && !mine;
 
@@ -366,7 +395,7 @@ async function pageEvent(id) {
       <h1 style="margin:.7rem 0 .6rem;color:#fff">${esc(e.title)}</h1>
       <div class="meta">
         <span>🕒 ${fmtWhen(e.starts_at, e.ends_at)}</span>
-        <span>📍 ${esc(e.location_name)}</span>
+        <span>📍 ${esc(e.location_name)}${e.address ? ' · ' + esc(e.address) : ''}</span>
         <span>⏱️ ${fmtHours(e.hours)} hours</span>
         <span>🙋 ${going}${e.capacity ? ' / ' + e.capacity : ''} going</span>
       </div>
@@ -377,7 +406,7 @@ async function pageEvent(id) {
         <p style="white-space:pre-wrap;margin-top:.3rem">${esc(e.description) || '<span class="muted">More details coming soon.</span>'}</p>
         <div id="actions" style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.2rem"></div>
         <div id="checkin"></div>
-        ${e.lat != null ? `<p class="help" style="margin-top:1rem"><a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${e.lat},${e.lng}">Get directions in Google Maps ↗</a></p>` : ''}
+        ${e.lat != null ? `<p class="help" style="margin-top:1rem"><a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${e.address ? encodeURIComponent(e.address) : e.lat + ',' + e.lng}">Get directions in Google Maps ↗</a></p>` : ''}
       </div>
       <div>
         ${e.lat != null ? '<div class="map medium" id="emap"></div>' : ''}
@@ -388,7 +417,9 @@ async function pageEvent(id) {
   // sign up / cancel
   const actions = document.getElementById('actions');
   if (checkedIn) {
-    actions.innerHTML = `<span class="tag" style="font-size:.95rem;padding:.5rem .9rem">✅ Checked in · ${fmtHours(e.hours)} hours logged</span>`;
+    actions.innerHTML = `<span class="tag" style="font-size:.95rem;padding:.5rem .9rem">✅ Done · ${fmtHours(loggedHours ?? e.hours)} verified hours logged</span>`;
+  } else if (openCheckin) {
+    actions.innerHTML = '';
   } else if (!ended) {
     if (mine) {
       actions.innerHTML = `<span class="tag" style="font-size:.95rem;padding:.5rem .9rem">✅ You're signed up</span><button class="btn danger small" id="cancel">Cancel my spot</button>`;
@@ -410,7 +441,77 @@ async function pageEvent(id) {
   }
 
   // check-in
-  if (!checkedIn && checkinOpen) {
+  const box = document.getElementById('checkin');
+  const streetNo = (e.address || '').trim().match(/^\d+[A-Za-z]?/)?.[0];
+  const addrForm = (label) => streetNo ? `
+        <details class="addr-alt"><summary>Location not working? Use the address number</summary>
+          <p class="help" style="margin:.4rem 0">Type the street number from the event address (the number at the start).</p>
+          <form id="addrform" style="display:flex;gap:.5rem;flex-wrap:wrap"><input id="addrno" inputmode="numeric" placeholder="e.g. 4135" style="max-width:150px"><button class="btn small green">${label}</button></form>
+        </details>` : '';
+  if (gps && openCheckin) {
+    // currently checked in -> live timer + check out
+    const t0 = new Date(openCheckin.checked_in_at).getTime();
+    box.innerHTML = `
+      <div class="checkin-box live">
+        <div class="live-dot"></div><strong>You're checked in!</strong>
+        <div class="timer" id="timer">${fmtTimer(Date.now() - t0)}</div>
+        <p class="help" style="margin:.2rem 0 .8rem">Up to ${fmtHours(e.hours)} hours count for this event. Stay at the spot and check out when you're done.</p>
+        ${openCheckin.method === 'address' ? `<form id="addrform" style="display:flex;gap:.5rem;flex-wrap:wrap"><input id="addrno" inputmode="numeric" placeholder="Address number" style="max-width:170px"><button class="btn green">🏁 Check out</button></form>`
+          : `<button class="btn green" id="checkout">🏁 Check out</button>${addrForm('Check out')}`}
+        <div id="gps-err" class="error"></div>
+      </div>`;
+    clearInterval(window._tick);
+    window._tick = setInterval(() => { const el = document.getElementById('timer'); if (!el) return clearInterval(window._tick); el.textContent = fmtTimer(Date.now() - t0); }, 1000);
+    const af = document.getElementById('addrform');
+    if (af) af.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const err = document.getElementById('gps-err'); err.textContent = '';
+      const { data, error } = await sb.rpc('address_check_out', { p_event: id, p_number: document.getElementById('addrno').value });
+      if (error) { err.textContent = cleanError(error); return; }
+      confetti(); toast(`Checked out! +${fmtHours(data)} verified hours 🎉`); render();
+    };
+    const co = document.getElementById('checkout');
+    if (co) co.onclick = async (ev) => {
+      const btn = ev.currentTarget, err = document.getElementById('gps-err'); err.textContent = '';
+      btn.disabled = true; btn.textContent = '📡 Checking your location…';
+      try {
+        const c = await getLocation();
+        const { data, error } = await sb.rpc('gps_check_out', { p_event: id, p_lat: c.latitude, p_lng: c.longitude });
+        if (error) throw error;
+        confetti(); toast(`Checked out! +${fmtHours(data)} verified hours 🎉`); render();
+      } catch (e2) { err.textContent = cleanError(e2); btn.disabled = false; btn.textContent = '🏁 Check out'; }
+    };
+  } else if (gps && !checkedIn && checkinOpen) {
+    box.innerHTML = `
+      <div class="checkin-box">
+        <strong>📍 Time to check in!</strong> When you're at the event spot, tap below. Your phone checks that you're there, and a timer starts. Check out when you're done to log your hours.
+        <div style="margin-top:.8rem"><button class="btn" id="imhere">📍 I'm here: check in</button></div>
+        ${addrForm('Check in')}
+        <div id="gps-err" class="error"></div>
+      </div>`;
+    const af = document.getElementById('addrform');
+    if (af) af.onsubmit = async (ev) => {
+      ev.preventDefault();
+      if (needLogin()) return;
+      const err = document.getElementById('gps-err'); err.textContent = '';
+      const { error } = await sb.rpc('address_check_in', { p_event: id, p_number: document.getElementById('addrno').value });
+      if (error) { err.textContent = cleanError(error); return; }
+      confetti(); toast('Checked in! Your timer is running ⏱️'); render();
+    };
+    document.getElementById('imhere').onclick = async (ev) => {
+      if (needLogin()) return;
+      const btn = ev.currentTarget, err = document.getElementById('gps-err'); err.textContent = '';
+      btn.disabled = true; btn.textContent = '📡 Checking your location…';
+      try {
+        const c = await getLocation();
+        const { error } = await sb.rpc('gps_check_in', { p_event: id, p_lat: c.latitude, p_lng: c.longitude });
+        if (error) throw error;
+        confetti(); toast('Checked in! Your timer is running ⏱️'); render();
+      } catch (e2) { err.textContent = cleanError(e2); btn.disabled = false; btn.textContent = "📍 I'm here: check in"; }
+    };
+  } else if (gps && !checkedIn && !ended) {
+    box.innerHTML = `<div class="checkin-box"><strong>📍 No leader needed.</strong> Check-in opens 30 minutes before the start. Come back to this page when you're at the spot.</div>`;
+  } else if (!gps && !checkedIn && checkinOpen) {
     document.getElementById('checkin').innerHTML = `
       <div class="checkin-box">
         <strong>📍 At the event?</strong> Enter the check-in code your event leader gives you to log verified hours.
@@ -445,8 +546,8 @@ async function pageEvent(id) {
     document.getElementById('admin-box').innerHTML = `
       <div class="card" style="margin-top:1rem">
         <h3>🔐 Admin</h3>
-        <p class="muted" style="margin:.2rem 0 .6rem">Read this code out loud at the event. Volunteers enter it to log verified hours.</p>
-        <div class="code-box">${esc(codeRow?.code || '—')}</div>
+        ${gps ? '<p class="muted" style="margin:.2rem 0 .6rem">📍 <strong>Location check-in.</strong> Volunteers check in and out at the pin. No leader or code needed.</p>'
+          : `<p class="muted" style="margin:.2rem 0 .6rem">Read this code out loud at the event. Volunteers enter it to log verified hours.</p><div class="code-box">${esc(codeRow?.code || '—')}</div>`}
         <h3 style="margin-top:1.2rem">Signed up (${people?.length || 0}) · Checked in (${logged?.length || 0})</h3>
         ${people?.length ? `<ul>${people.map((p) => `<li>${esc(p.profiles?.full_name || 'Volunteer')}</li>`).join('')}</ul>` : '<p class="muted">No sign-ups yet.</p>'}
         <button class="btn danger small" id="del">Delete event</button>
@@ -647,31 +748,148 @@ async function pageMe() {
   };
 }
 
-async function pageCertificate() {
-  if (needLogin()) return;
-  const { rows, verified, self } = await getMyHours();
-  const v = rows.filter((r) => r.verified), s = rows.filter((r) => !r.verified);
-  const today = new Date().toLocaleDateString('en-US', { timeZone: TZ, month: 'long', day: 'numeric', year: 'numeric' });
-  const table = (list) => `<table><thead><tr><th>Date</th><th>Activity</th><th>Hours</th></tr></thead><tbody>
-    ${list.map((h) => `<tr><td>${fmtDay(h.activity_date)}</td><td>${esc(h.activity)}</td><td>${fmtHours(h.hours)}</td></tr>`).join('')}</tbody></table>`;
-  app.innerHTML = `
-    <div class="no-print" style="display:flex;gap:.6rem;justify-content:center;margin-bottom:1rem;flex-wrap:wrap">
-      <a class="btn ghost" href="#/me">← Back</a>
-      <button class="btn" onclick="window.print()">🖨️ Print / Save as PDF</button>
-    </div>
-    <div class="cert">
+function certificateHTML(c, official) {
+  const v = (c.details || []).filter((d) => d.verified), s = (c.details || []).filter((d) => !d.verified);
+  const table = (list, showHow) => `<table><thead><tr><th>Date</th><th>Activity</th><th>Hours</th>${showHow ? '<th>Check-in</th>' : ''}</tr></thead><tbody>
+    ${list.map((d) => `<tr><td>${fmtDay(d.date)}</td><td>${esc(d.activity)}</td><td>${fmtHours(d.hours)}</td>${showHow ? `<td>${methodLabel(d.method)}</td>` : ''}</tr>`).join('')}</tbody></table>`;
+  return `
+    <div class="cert ${official ? '' : 'unofficial'}">
+      ${official ? '' : '<div class="watermark">NOT CERTIFIED</div>'}
       <div class="seal">🤝</div>
       <div class="muted" style="letter-spacing:.2em;text-transform:uppercase;font-size:.8rem">${esc(SITE_NAME)}</div>
       <h1>Certificate of Community Service</h1>
       <p>This certifies that</p>
-      <div class="name">${esc(profile?.full_name || 'Volunteer')}</div>
-      <p class="total">has completed <strong>${fmtHours(verified)} verified hours</strong> of community service${self ? `, plus ${fmtHours(self)} self-reported hours` : ''}.</p>
-      ${v.length ? `<h3 style="margin-top:1.5rem;text-align:left">Verified hours</h3>${table(v)}` : ''}
-      ${s.length ? `<h3 style="margin-top:1.5rem;text-align:left">Self-reported hours (not verified)</h3>${table(s)}` : ''}
-      <div class="sig"><div>Date issued: ${today}</div><div>${esc(SITE_NAME)} · ${esc(CONTACT_EMAIL)}</div></div>
-      <p class="fine">Verified hours were confirmed by an on-site check-in code given by the event leader. Self-reported hours were entered by the volunteer and were not verified by ${esc(SITE_NAME)}.</p>
+      <div class="name">${esc(c.full_name || 'Volunteer')}</div>
+      <p class="total">has completed <strong>${fmtHours(c.verified_hours)} verified hours</strong> of community service${Number(c.self_hours) ? `, plus ${fmtHours(c.self_hours)} self-reported hours` : ''}.</p>
+      ${v.length ? `<h3 style="margin-top:1.5rem;text-align:left">Verified hours</h3>${table(v, true)}` : ''}
+      ${s.length ? `<h3 style="margin-top:1.5rem;text-align:left">Self-reported hours (not verified)</h3>${table(s, false)}` : ''}
+      <div class="sig">
+        <div class="sig-block">${official ? signatureHTML() : '<div class="sig-script" style="opacity:.15">Not signed</div>'}<div class="sig-line">${esc(SIGNER_NAME)}<br><span>${esc(SIGNER_TITLE)}</span></div></div>
+        <div class="sig-block"><div class="sig-date">${official ? fmtLong(c.reviewed_at) : '—'}</div><div class="sig-line">Issue date<br><span>${esc(SITE_NAME)}</span></div></div>
+      </div>
+      ${official ? `<p class="fine" style="margin-top:1.4rem"><strong>Certificate No. ${certNo(c.id)}</strong> · Verify at ${location.origin}${location.pathname}#/verify/${c.id}</p>` : ''}
+      <p class="fine">Verified hours were confirmed at the event by a leader's code, the volunteer's phone location, or the event's address number, and reviewed by ${esc(SITE_NAME)} before certification. Self-reported hours were entered by the volunteer.</p>
+    </div>`;
+}
+
+async function pageCertificate() {
+  if (needLogin()) return;
+  const [{ rows, verified, self }, { data: certs, error }] = await Promise.all([
+    getMyHours(),
+    sb.from('certifications').select('*').eq('user_id', session.user.id).order('requested_at', { ascending: false }),
+  ]);
+  if (error) throw error;
+  const pending = (certs || []).find((c) => c.status === 'pending');
+  const approved = (certs || []).find((c) => c.status === 'approved');
+  const lastDenied = certs?.[0]?.status === 'denied' ? certs[0] : null;
+  const newHours = approved && (Number(approved.verified_hours) !== verified || Number(approved.self_hours) !== self);
+  const preview = { full_name: profile?.full_name, verified_hours: verified, self_hours: self,
+    details: rows.map((r) => ({ date: r.activity_date, activity: r.activity, hours: r.hours, verified: r.verified, method: r.method })) };
+
+  let status;
+  if (pending) status = `<div class="status-card pending"><span class="big">⏳</span><div><h3>Waiting for review</h3><p>You asked for certification on ${fmtLong(pending.requested_at)}. The LendAHand MN team is checking your hours, and you'll get an email when it's done.</p></div></div>`;
+  else if (approved && !newHours) status = `<div class="status-card ok"><span class="big">✅</span><div><h3>Certified!</h3><p>Signed by ${esc(SIGNER_NAME)} on ${fmtLong(approved.reviewed_at)}. Print it below or share the verify link.</p></div></div>`;
+  else status = `<div class="status-card"><span class="big">📝</span><div><h3>${approved ? 'You have new hours' : 'Get your hours certified'}</h3>
+      <p>${approved ? 'Request a new certificate to include your latest hours.' : 'Send your hours to the LendAHand MN team for review. Once approved, your certificate is signed by ' + esc(SIGNER_NAME) + ' and you get an email.'}</p>
+      ${lastDenied ? `<p class="error" style="font-weight:500">Last request wasn't approved${lastDenied.note ? ': ' + esc(lastDenied.note) : '.'}</p>` : ''}
+      <button class="btn" id="req">📨 Request certification</button></div></div>`;
+
+  app.innerHTML = `
+    <div class="no-print">
+      <div class="page-title"><span class="eyebrow">Certificate</span><h1>Your hour certificate</h1></div>
+      ${status}
+      <div style="display:flex;gap:.6rem;justify-content:center;margin:1.5rem 0;flex-wrap:wrap">
+        <a class="btn ghost" href="#/me">← Back</a>
+        ${approved ? `<button class="btn" onclick="window.print()">🖨️ Print / Save as PDF</button>
+        <button class="btn green" id="copy">🔗 Copy verify link</button>` : ''}
+      </div>
+      ${approved ? '' : '<p class="help" style="text-align:center">Preview only: your certificate gets signed after it\'s approved.</p>'}
     </div>
-    <p class="help no-print" style="text-align:center">Tip: in the print window, choose "Save as PDF" to download it.</p>`;
+    ${approved ? certificateHTML(approved, true) : certificateHTML(preview, false)}`;
+
+  const req = document.getElementById('req');
+  if (req) req.onclick = async () => {
+    if (!confirm('Send your hours to LendAHand MN for certification?')) return;
+    req.disabled = true;
+    const { data, error: e2 } = await sb.rpc('request_certification');
+    if (e2) { req.disabled = false; return toast(cleanError(e2)); }
+    notifyEmail(data);
+    confetti(); toast('Request sent! We\'ll email you when it\'s reviewed 📨'); render();
+  };
+  const copy = document.getElementById('copy');
+  if (copy) copy.onclick = async () => {
+    const url = `${location.origin}${location.pathname}#/verify/${approved.id}`;
+    try { await navigator.clipboard.writeText(url); toast('Verify link copied'); } catch { prompt('Copy this link:', url); }
+  };
+}
+
+async function pageVerify(id) {
+  const { data, error } = await sb.rpc('get_certificate', { p_id: id });
+  const c = data?.[0];
+  if (error || !c) { app.innerHTML = `<div class="card empty narrow"><span class="big">❓</span><h2>Certificate not found</h2><p>Double-check the link or certificate number.</p></div>`; return; }
+  const ok = c.status === 'approved';
+  app.innerHTML = `
+    <div class="no-print">
+      <div class="verify-banner ${ok ? 'ok' : 'bad'}">
+        <span class="big">${ok ? '✅' : c.status === 'pending' ? '⏳' : '❌'}</span>
+        <div><h2>${ok ? 'This certificate is real' : c.status === 'pending' ? 'Not certified yet (under review)' : 'This certificate was not approved'}</h2>
+        <p>${ok ? `Issued by ${esc(SITE_NAME)} to <strong>${esc(c.full_name)}</strong> on ${fmtLong(c.reviewed_at)} for ${fmtHours(c.verified_hours)} verified hours. Certificate No. ${certNo(c.id)}.` : `Requested by ${esc(c.full_name)}.`}</p></div>
+      </div>
+    </div>
+    ${ok ? certificateHTML(c, true) : ''}`;
+}
+
+async function pageReview(id) {
+  if (needLogin()) return;
+  if (!profile?.is_admin) { app.innerHTML = `<div class="card empty">Only LendAHand MN admins can review certifications.</div>`; return; }
+  const { data: c, error } = await sb.from('certifications').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  if (!c) { app.innerHTML = `<div class="card empty">Request not found. <a href="#/admin">Back to admin</a></div>`; return; }
+  const v = (c.details || []).filter((d) => d.verified), s = (c.details || []).filter((d) => !d.verified);
+  const byMethod = {}; v.forEach((d) => { byMethod[d.method || 'code'] = (byMethod[d.method || 'code'] || 0) + Number(d.hours); });
+  app.innerHTML = `
+    <p style="margin-top:0"><a href="#/admin" style="font-weight:600;text-decoration:none">← Admin</a></p>
+    <div class="page-title"><span class="eyebrow">Certification request</span><h1>Should we certify this?</h1></div>
+    <div class="split">
+      <div class="card">
+        <h2 style="margin-bottom:.2rem">${esc(c.full_name)}</h2>
+        <p class="muted" style="margin-top:0">${esc(c.email || '')} · requested ${fmtLong(c.requested_at)}</p>
+        <div class="review-stats">
+          <div><b>${fmtHours(c.verified_hours)}</b><span>verified hrs</span></div>
+          <div><b>${fmtHours(c.self_hours)}</b><span>self-reported hrs</span></div>
+          ${Object.entries(byMethod).map(([m, h]) => `<div><b>${fmtHours(h)}</b><span>${methodLabel(m)}</span></div>`).join('')}
+        </div>
+        ${byMethod.address ? '<p class="notice">🏠 Some hours were checked in with the <strong>address number</strong>, which is the easiest method to fake. Give those a closer look.</p>' : ''}
+        <div class="table-scroll">
+          <table><thead><tr><th>Date</th><th>Activity</th><th>Hours</th><th>How</th></tr></thead><tbody>
+          ${(c.details || []).map((d) => `<tr><td>${fmtDay(d.date)}</td><td>${esc(d.activity)}</td><td>${fmtHours(d.hours)}</td><td>${d.verified ? methodLabel(d.method) : '<span class="tag gray">Self-reported</span>'}</td></tr>`).join('')}
+          </tbody></table>
+        </div>
+      </div>
+      <div class="card">
+        ${c.status === 'pending' ? `
+          <h3>Your decision</h3>
+          <label>Note to the volunteer <span class="muted" style="font-weight:400">(optional, included in their email)</span></label>
+          <textarea id="note" placeholder="Great work! / Please add proof for the self-reported hours…"></textarea>
+          <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem">
+            <button class="btn green" id="yes">✅ Yes, certify</button>
+            <button class="btn danger" id="no">Don't certify</button>
+          </div>
+          <p class="help">Approving signs the certificate as ${esc(SIGNER_NAME)} and emails the volunteer.</p>`
+        : `<h3>${c.status === 'approved' ? '✅ Certified' : '❌ Not certified'}</h3><p class="muted">Reviewed by ${esc(c.reviewed_by || 'admin')} on ${fmtLong(c.reviewed_at)}.</p>${c.note ? `<p>Note: ${esc(c.note)}</p>` : ''}
+          ${c.status === 'approved' ? `<a class="btn ghost small" href="#/verify/${c.id}">View certificate</a>` : ''}`}
+      </div>
+    </div>`;
+  const decide = async (yes) => {
+    const note = document.getElementById('note').value;
+    if (!yes && !note.trim() && !confirm('Deny without a note?')) return;
+    const { error: e2 } = await sb.rpc('review_certification', { p_id: id, p_approve: yes, p_note: note });
+    if (e2) return toast(cleanError(e2));
+    notifyEmail(id);
+    if (yes) confetti();
+    toast(yes ? `Certified! ${EMAIL_SCRIPT_URL ? 'Email sent to the volunteer 📨' : ''}` : 'Marked as not certified'); render();
+  };
+  const y = document.getElementById('yes'); if (y) { y.onclick = () => decide(true); document.getElementById('no').onclick = () => decide(false); }
 }
 
 async function pageLeaderboard() {
@@ -766,7 +984,8 @@ async function pageAbout() {
         <p>LendAHand MN is a free, community-run site that makes it easy to find volunteer opportunities around Minnesota and keep track of the hours you give.</p>
         <p>Whether you need service hours for school, a club or a scholarship, or you just want to do some good on a Saturday morning, we make it simple to show up and get credit for it.</p>
         <h3 style="margin-top:1.4rem">How check-in works</h3>
-        <p class="muted">Every event has a secret code that the event leader shares in person. Volunteers enter it on the event page, and their hours are logged as <strong>verified</strong>. That's how schools and organizations know the hours are real.</p>
+        <p class="muted"><strong>🔑 Leader events:</strong> the event leader shares a secret code in person. Volunteers enter it and their hours are logged as <strong>verified</strong>.</p>
+        <p class="muted"><strong>📍 At-the-spot events:</strong> no leader needed. Tap "I'm here" at the event pin to start a timer, and check out at the same spot when you're done. Your phone's location confirms you were there, so the hours are verified.</p>
       </div>
       <div class="card reveal d1" style="background:linear-gradient(135deg,#fff6e0,#ffeee6)">
         <h2>Host an event 📣</h2>
@@ -872,12 +1091,19 @@ async function pageAnytime() {
 async function pageAdmin() {
   if (needLogin()) return;
   if (!profile?.is_admin) { app.innerHTML = `<div class="card empty">This page is for LendAHand MN admins.</div>`; return; }
-  const { data: events } = await sb.from('events').select('id,title,starts_at,ends_at,location_name').order('starts_at', { ascending: false });
+  const { data: events } = await sb.from('events').select('id,title,starts_at,ends_at,location_name,checkin_mode').order('starts_at', { ascending: false });
   const { data: codes } = await sb.from('event_codes').select('event_id, code');
+  const { data: reqs } = await sb.from('certifications').select('id, full_name, verified_hours, self_hours, requested_at').eq('status', 'pending').order('requested_at');
   const codeMap = Object.fromEntries((codes || []).map((c) => [c.event_id, c.code]));
 
   app.innerHTML = `
     <h1>Admin</h1>
+    <div class="card" style="margin:1rem 0 1.5rem">
+      <h2>📨 Certification requests ${reqs?.length ? `<span class="tag coral" style="font-size:.9rem;vertical-align:middle">${reqs.length} waiting</span>` : ''}</h2>
+      ${reqs?.length ? `<table><thead><tr><th>Volunteer</th><th>Hours</th><th>Requested</th><th></th></tr></thead><tbody>
+        ${reqs.map((r) => `<tr><td><strong>${esc(r.full_name)}</strong></td><td>${fmtHours(r.verified_hours)} verified · ${fmtHours(r.self_hours)} self</td><td>${fmtLong(r.requested_at)}</td><td><a class="btn small" href="#/review/${r.id}">Review</a></td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted">No requests waiting. 🎉</p>'}
+    </div>
     <div class="split" style="margin-top:1rem">
       <div class="card">
         <h2>Post a new event</h2>
@@ -896,7 +1122,14 @@ async function pageAdmin() {
             <div><label>Location name</label><input id="loc" required placeholder="Lake Phalen, St. Paul"></div>
             <div><label>Spots (optional)</label><input id="cap" type="number" min="1" placeholder="No limit"></div>
           </div>
-          <label>Pin on map <span class="muted" style="font-weight:400">(click the map)</span></label>
+          <label>Street address <span class="muted" style="font-weight:400">(needed for address-number check-in)</span></label>
+          <input id="addr" placeholder="4135 W Lake Harriet Pkwy, Minneapolis">
+          <label>How do volunteers check in?</label>
+          <div class="mode-pick" id="mode">
+            <label class="mode on"><input type="radio" name="m" value="code" checked><b>🔑 Leader code</b><span>A leader is there and reads out a code.</span></label>
+            <label class="mode"><input type="radio" name="m" value="gps"><b>📍 At the spot</b><span>No leader. Check in and out by location or the address number.</span></label>
+          </div>
+          <label>Pin on map <span class="muted" style="font-weight:400">(click the exact meeting spot)</span></label>
           <div class="map small" id="pick"></div>
           <div class="help" id="pinlabel">No pin yet</div>
           <div id="err" class="error"></div>
@@ -905,9 +1138,9 @@ async function pageAdmin() {
       </div>
       <div class="card">
         <h2>All events</h2>
-        ${events?.length ? `<table><thead><tr><th>Event</th><th>Code</th></tr></thead><tbody>
+        ${events?.length ? `<table><thead><tr><th>Event</th><th>Check-in</th></tr></thead><tbody>
           ${events.map((e) => `<tr><td><a href="#/event/${e.id}">${esc(e.title)}</a><br><span class="muted" style="font-size:.8rem">${fmtWhen(e.starts_at, e.ends_at)}</span></td>
-          <td><code>${esc(codeMap[e.id] || '—')}</code></td></tr>`).join('')}</tbody></table>` : '<p class="muted">No events yet.</p>'}
+          <td>${e.checkin_mode === 'gps' ? '📍 At the spot' : `<code>${esc(codeMap[e.id] || '—')}</code>`}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No events yet.</p>'}
       </div>
     </div>`;
 
@@ -919,6 +1152,7 @@ async function pageAdmin() {
     document.getElementById('pinlabel').textContent = `📍 Pinned at ${pin[0]}, ${pin[1]}`;
   });
 
+  document.getElementById('mode').onchange = () => document.querySelectorAll('#mode .mode').forEach((l) => l.classList.toggle('on', l.querySelector('input').checked));
   document.getElementById('ef').onsubmit = async (ev) => {
     ev.preventDefault();
     const err = document.getElementById('err'); err.textContent = '';
@@ -937,12 +1171,15 @@ async function pageAdmin() {
       location_name: document.getElementById('loc').value.trim(),
       capacity: cap ? Number(cap) : null,
       lat: pin[0], lng: pin[1],
+      checkin_mode: document.querySelector('#mode input:checked').value,
+      address: document.getElementById('addr').value.trim() || null,
     }).select('id').single();
     if (error) { err.textContent = cleanError(error); btn.disabled = false; return; }
     const code = randomCode();
     const { error: cErr } = await sb.from('event_codes').insert({ event_id: e.id, code });
     if (cErr) { err.textContent = cleanError(cErr); btn.disabled = false; return; }
-    toast(`Event posted! Check-in code: ${code}`);
+    const mode = document.querySelector('#mode input:checked').value;
+    toast(mode === 'gps' ? 'Event posted! Volunteers check in at the pin 📍' : `Event posted! Check-in code: ${code}`);
     go(`#/event/${e.id}`);
   };
 }
@@ -961,11 +1198,14 @@ const routes = [
   [/^#\/admin$/, pageAdmin],
   [/^#\/donate$/, pageDonate],
   [/^#\/anytime$/, pageAnytime],
+  [/^#\/verify\/([\w-]+)$/, pageVerify],
+  [/^#\/review\/([\w-]+)$/, pageReview],
 ];
 
 async function render() {
   document.body.classList.remove('nav-open');
   clearMaps();
+  clearInterval(window._tick);
   renderNavAuth();
   const hash = location.hash || '#/';
   if (hash.includes('access_token=') || hash.includes('type=recovery')) return; // Supabase handles these
