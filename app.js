@@ -861,8 +861,8 @@ async function pageReview(id) {
         </div>
         ${byMethod.address ? '<p class="notice">🏠 Some hours were checked in with the <strong>address number</strong>, which is the easiest method to fake. Give those a closer look.</p>' : ''}
         <div class="table-scroll">
-          <table><thead><tr><th>Date</th><th>Activity</th><th>Hours</th><th>How</th></tr></thead><tbody>
-          ${(c.details || []).map((d) => `<tr><td>${fmtDay(d.date)}</td><td>${esc(d.activity)}</td><td>${fmtHours(d.hours)}</td><td>${d.verified ? methodLabel(d.method) : '<span class="tag gray">Self-reported</span>'}</td></tr>`).join('')}
+          <table><thead><tr>${c.status === 'pending' ? '<th><input type="checkbox" id="all" checked title="Select all"></th>' : ''}<th>Date</th><th>Activity</th><th>Hours</th><th>How</th></tr></thead><tbody>
+          ${(c.details || []).map((d, i) => `<tr>${c.status === 'pending' ? `<td><input type="checkbox" class="keep" value="${i}" checked></td>` : ''}<td>${fmtDay(d.date)}</td><td>${esc(d.activity)}</td><td>${fmtHours(d.hours)}</td><td>${d.verified ? methodLabel(d.method) : '<span class="tag gray">Self-reported</span>'}</td></tr>`).join('')}
           </tbody></table>
         </div>
       </div>
@@ -872,18 +872,31 @@ async function pageReview(id) {
           <label>Note to the volunteer <span class="muted" style="font-weight:400">(optional, included in their email)</span></label>
           <textarea id="note" placeholder="Great work! / Please add proof for the self-reported hours…"></textarea>
           <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem">
-            <button class="btn green" id="yes">✅ Yes, certify</button>
+            <button class="btn green" id="yes">✅ Yes, certify selected</button>
             <button class="btn danger" id="no">Don't certify</button>
           </div>
-          <p class="help">Approving signs the certificate as ${esc(SIGNER_NAME)} and emails the volunteer.</p>`
+          <p class="help" id="selhelp"></p>
+          <p class="help">Uncheck any hours you don't want to certify. Approving signs the certificate as ${esc(SIGNER_NAME)} and emails the volunteer.</p>`
         : `<h3>${c.status === 'approved' ? '✅ Certified' : '❌ Not certified'}</h3><p class="muted">Reviewed by ${esc(c.reviewed_by || 'admin')} on ${fmtLong(c.reviewed_at)}.</p>${c.note ? `<p>Note: ${esc(c.note)}</p>` : ''}
           ${c.status === 'approved' ? `<a class="btn ghost small" href="#/verify/${c.id}">View certificate</a>` : ''}`}
       </div>
     </div>`;
+  const keeps = () => [...document.querySelectorAll('.keep:checked')].map((x) => Number(x.value));
+  const updSel = () => {
+    const k = keeps(), det = c.details || [];
+    const hrs = k.reduce((a, i) => a + Number(det[i].hours), 0);
+    const el = document.getElementById('selhelp');
+    if (el) el.innerHTML = `<strong>${k.length} of ${det.length}</strong> entries selected · ${fmtHours(hrs)} hours`;
+  };
+  const all = document.getElementById('all');
+  if (all) all.onchange = () => { document.querySelectorAll('.keep').forEach((x) => (x.checked = all.checked)); updSel(); };
+  document.querySelectorAll('.keep').forEach((x) => (x.onchange = updSel));
+  updSel();
   const decide = async (yes) => {
     const note = document.getElementById('note').value;
     if (!yes && !note.trim() && !confirm('Deny without a note?')) return;
-    const { error: e2 } = await sb.rpc('review_certification', { p_id: id, p_approve: yes, p_note: note });
+    if (yes && !keeps().length) return toast('Select at least one entry to certify');
+    const { error: e2 } = await sb.rpc('review_certification', { p_id: id, p_approve: yes, p_note: note, p_keep: yes ? keeps() : null });
     if (e2) return toast(cleanError(e2));
     notifyEmail(id);
     if (yes) confetti();
